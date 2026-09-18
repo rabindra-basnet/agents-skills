@@ -396,6 +396,124 @@ Never do the actual work inline in the request/response cycle if it involves ext
 (email providers, LLM calls, file processing) — enqueue and return immediately; let the worker
 own retries/backoff via arq's `max_tries`/`retry_delay`.
 
+## Multiple queues and workers
+
+### Queue configuration
+
+```python
+# app/workers/queues.py
+from dataclasses import dataclass
+
+@dataclass
+class QueueConfig:
+    name: str
+    timeout: int
+    max_jobs: int
+
+QUEUES = {
+    "short": QueueConfig(name="short", timeout=60, max_jobs=10),
+    "default": QueueConfig(name="default", timeout=300, max_jobs=20),
+    "long": QueueConfig(name="long", timeout=3600, max_jobs=5),
+}
+```
+
+### Job registry with queue assignment
+
+```python
+# app/workers/jobs/__init__.py
+from app.workers.jobs.send_email import send_email
+from app.workers.jobs.nightly_report import nightly_report
+from app.workers.jobs.process_webhook import process_webhook
+from app.workers.jobs.cleanup_expired import cleanup_expired
+
+# Map jobs to queues
+JOB_QUEUES = {
+    send_email: "short",
+    process_webhook: "short",
+    nightly_report: "long",
+    cleanup_expired: "long",
+}
+
+ALL_JOBS = list(JOB_QUEUES.keys())
+```
+
+### Single worker with queue filtering
+
+```python
+# app/workers/arq_worker.py
+from arq import cron
+from arq.connections import RedisSettings
+from app.core.config import settings
+from app.workers.queues import QUEUES
+from app.workers.jobs import JOB_QUEUES
+from app.workers.history import record_job_start, record_job_result
+
+def create_worker_settings(queue_name: str):
+    """Create worker settings for a specific queue."""
+    queue = QUEUES[queue_name]
+    jobs = [job for job, q in JOB_QUEUES.items() if q == queue_name]
+    
+    class WorkerSettings:
+        redis_settings = RedisSettings.from_dsn(settings.redis_url)
+        functions = jobs
+        queue_name = queue_name
+        max_jobs = queue.max_jobs
+        job_timeout = queue.timeout
+        on_job_start = record_job_start
+        after_job_end = record_job_result
+    
+    return WorkerSettings
+
+ShortWorker = create_worker_settings("short")
+DefaultWorker = create_worker_settings("default")
+LongWorker = create_worker_settings("long")
+```
+
+### Enqueue with auto queue selection
+
+```python
+# app/workers/enqueue.py
+from app.core.redis import get_arq_redis
+from app.workers.jobs import JOB_QUEUES
+
+async def enqueue_job(method, **kwargs):
+    """Enqueue job, auto-select queue from registry."""
+    queue = JOB_QUEUES.get(method, "default")
+    redis = await get_arq_redis()
+    return await redis.enqueue_job(method, _queue_name=queue, **kwargs)
+```
+
+```python
+# API service
+from app.workers.enqueue import enqueue_job
+
+await enqueue_job("send_email", to="user@example.com")  # Goes to "short" queue
+await enqueue_job("nightly_report")  # Goes to "long" queue
+```
+
+### Docker compose
+
+```yaml
+services:
+  short-worker:
+    build: .
+    command: arq app.workers.arq_worker.ShortWorker
+    deploy:
+      replicas: 3
+
+  default-worker:
+    build: .
+    command: arq app.workers.arq_worker.DefaultWorker
+    deploy:
+      replicas: 2
+
+  long-worker:
+    build: .
+    command: arq app.workers.arq_worker.LongWorker
+    deploy:
+      replicas: 1
+```
+
 ## DO NOT
 
 - **Never** run arq worker inside the uvicorn process — it must be a separate process/container.
