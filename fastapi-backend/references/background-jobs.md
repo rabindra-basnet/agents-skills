@@ -161,33 +161,51 @@ async def record_job_result(ctx: dict) -> None:
 
 ```python
 # app/workers/enqueue.py
+from typing import overload, Literal
 from app.core.redis import get_arq_redis
 
-async def enqueue_send_email(*, to: str, template: str, subject: str, context: dict | None = None):
-    redis = await get_arq_redis()
-    await redis.enqueue_job("send_email", to=to, template=template, subject=subject, context=context)
+@overload
+async def enqueue_job(
+    job: Literal["send_email"],
+    *,
+    to: str,
+    template: str,
+    subject: str,
+    context: dict | None = None,
+) -> None: ...
 
-async def enqueue_nightly_report():
-    redis = await get_arq_redis()
-    await redis.enqueue_job("nightly_report")
+@overload
+async def enqueue_job(
+    job: Literal["nightly_report"],
+) -> None: ...
 
-async def enqueue_process_webhook(*, event_type: str, payload: dict):
-    redis = await get_arq_redis()
-    await redis.enqueue_job("process_webhook", event_type=event_type, payload=payload)
+@overload
+async def enqueue_job(
+    job: Literal["process_webhook"],
+    *,
+    event_type: str,
+    payload: dict,
+) -> None: ...
 
-async def enqueue_cleanup_expired():
+@overload
+async def enqueue_job(
+    job: Literal["cleanup_expired"],
+) -> None: ...
+
+async def enqueue_job(job: str, **kwargs) -> None:
+    """Enqueue a background job."""
     redis = await get_arq_redis()
-    await redis.enqueue_job("cleanup_expired")
+    await redis.enqueue_job(job, **kwargs)
 ```
 
 ```python
 # API service
-from app.workers.enqueue import enqueue_send_email
+from app.workers.enqueue import enqueue_job
 
 class AuthService:
     async def register(self, data: UserCreate) -> User:
         user = await self._repo.create(data)
-        await enqueue_send_email(to=user.email, template="welcome", subject="Welcome!")
+        await enqueue_job("send_email", to=user.email, template="welcome", subject="Welcome!")
         return user
 ```
 
