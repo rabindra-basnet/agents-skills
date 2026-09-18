@@ -8,17 +8,55 @@ topologies, or features arq genuinely lacks — don't default to it.
 
 ## Worker setup
 
+### Option 1: Decorator pattern (recommended)
+
+```python
+# app/workers/jobs/registry.py
+from typing import Callable
+
+_registry: dict[str, Callable] = {}
+
+def register_job(func: Callable) -> Callable:
+    """Decorator to auto-register a job function."""
+    _registry[func.__name__] = func
+    return func
+
+def get_all_jobs() -> list[Callable]:
+    return list(_registry.values())
+```
+
+```python
+# app/workers/jobs/send_email.py
+from app.workers.jobs.registry import register_job
+
+@register_job
+async def send_email(ctx: dict, *, to: str, template: str) -> dict:
+    http: httpx.AsyncClient = ctx["http"]
+    resp = await http.post(
+        "https://api.emailprovider.com/send",
+        json={"to": to, "template": template},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return {"sent": True, "to": to}
+```
+
 ```python
 # app/workers/arq_worker.py
 from arq import cron
 from arq.connections import RedisSettings
 from app.core.config import settings
-from app.workers.jobs.send_email import send_email
-from app.workers.jobs.nightly_report import nightly_report
+from app.workers.jobs.registry import get_all_jobs
 from app.workers.history import record_job_start, record_job_result
 
+# Explicit imports trigger @register_job decorator
+import app.workers.jobs.send_email  # noqa: F401
+import app.workers.jobs.nightly_report  # noqa: F401
+import app.workers.jobs.process_webhook  # noqa: F401
+import app.workers.jobs.cleanup_expired  # noqa: F401
+
 async def startup(ctx: dict) -> None:
-    ctx["db_engine"] = engine          # reuse the same async engine as the API process
+    ctx["db_engine"] = engine
     ctx["http"] = httpx.AsyncClient()
 
 async def shutdown(ctx: dict) -> None:
@@ -33,7 +71,7 @@ async def after_job_end(ctx: dict) -> None:
 
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    functions = [send_email, nightly_report]
+    functions = get_all_jobs()  # ✅ Auto-populated from @register_job
     cron_jobs = [
         cron(nightly_report, hour=2, minute=0, run_at_startup=False),
     ]
@@ -44,6 +82,26 @@ class WorkerSettings:
     max_jobs = 20
     job_timeout = 300
     max_tries = 3
+```
+
+### Option 2: Manual registration (simpler projects)
+
+```python
+# app/workers/arq_worker.py
+from arq import cron
+from arq.connections import RedisSettings
+from app.core.config import settings
+from app.workers.jobs.send_email import send_email
+from app.workers.jobs.nightly_report import nightly_report
+from app.workers.history import record_job_start, record_job_result
+
+class WorkerSettings:
+    redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    functions = [send_email, nightly_report]
+    cron_jobs = [
+        cron(nightly_report, hour=2, minute=0, run_at_startup=False),
+    ]
+    # ... lifecycle hooks
 ```
 
 Run it with `uv run arq app.workers.arq_worker.WorkerSettings` as its own process/container
@@ -126,3 +184,5 @@ own retries/backoff via arq's `max_tries`/`retry_delay`.
 - **Never** use `run_at_startup=True` for cron jobs in production — they should run on schedule only.
 - **Never** store job results in memory — they'll be lost on restart.
 - **Never** use Celery unless you genuinely need multi-language workers or complex routing topologies.
+- **Never** forget to import job modules in `arq_worker.py` — unimported jobs won't be discovered.
+- **Never** use `register_job` without importing the module — the decorator only runs when the module loads.
