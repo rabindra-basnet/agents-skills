@@ -44,6 +44,23 @@ both, behind one interface), and how much "agentic" orchestration is actually wa
 | `references/ai-integration.md` | Adding OpenAI-compatible or Anthropic (Claude) LLM calls, provider abstraction, streaming, retries |
 | `references/agentic-flow.md` | Multi-step/tool-using agent behavior — decision tree for "do I even need a framework", and how to wire one in when you do |
 | `references/deployment.md` | Dockerfile, docker-compose for local dev, and shipping to AWS/Azure/Render/Cloudflare |
+| `references/debugging.md` | Local debugging (debugpy), logging-based debugging, remote debugging, common issues and fixes — never add debug code to production |
+| `references/testing.md` | Unit tests, integration tests, fixtures, mocking, coverage configuration |
+| `references/caching.md` | Redis caching strategies, cache-aside pattern, rate limiting, invalidation |
+| `references/cicd.md` | GitHub Actions CI/CD pipelines for testing, linting, deploying |
+| `references/documentation.md` | OpenAPI spec, docstrings, API changelog, ReDoc |
+| `references/logging-errors.md` | Core logging setup (TimedRotatingFileHandler), exception hierarchy, structured logging across layers |
+| `references/email.md` | SendGrid/Resend provider abstraction, background email sending |
+| `references/webhooks-push.md` | Webhook receivers with signature verification, FCM push notifications |
+| `references/voice.md` | Real-time voice via WebSocket, STT/TTS providers |
+| `references/think.md` | Chain-of-thought reasoning for agents |
+| `references/codemode.md` | Sandboxed Python code execution for agents |
+| `references/browse-the-web.md` | Playwright browser automation for agents |
+| `references/mcp.md` | Model Context Protocol server for tool exposure |
+| `references/server-driven-messages.md` | Server-controlled UI rendering |
+| `references/human-in-the-loop.md` | Agent pause/approve/resume workflow |
+| `references/observability.md` | Prometheus metrics, health checks, alerting |
+| `references/client-sdk.md` | Typed Python SDK generation from OpenAPI |
 
 ## Non-negotiables (apply regardless of which reference you're reading)
 
