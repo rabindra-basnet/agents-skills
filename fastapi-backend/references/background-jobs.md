@@ -469,16 +469,25 @@ DefaultWorker = create_worker_settings("default")
 LongWorker = create_worker_settings("long")
 ```
 
-### Enqueue with auto queue selection
+### Enqueue with queue selection
 
 ```python
 # app/workers/enqueue.py
 from app.core.redis import get_arq_redis
 from app.workers.jobs import JOB_QUEUES
 
-async def enqueue_job(method, **kwargs):
-    """Enqueue job, auto-select queue from registry."""
-    queue = JOB_QUEUES.get(method, "default")
+async def enqueue_job(method: str, *, queue: str | None = None, **kwargs):
+    """
+    Enqueue job with optional queue override.
+    
+    Args:
+        method: Job function name (string path)
+        queue: Queue override (short/default/long). If None, uses JOB_QUEUES mapping.
+        **kwargs: Arguments passed to the job function
+    """
+    # Use provided queue or fall back to job's default
+    queue = queue or JOB_QUEUES.get(method, "default")
+    
     redis = await get_arq_redis()
     return await redis.enqueue_job(method, _queue_name=queue, **kwargs)
 ```
@@ -487,8 +496,73 @@ async def enqueue_job(method, **kwargs):
 # API service
 from app.workers.enqueue import enqueue_job
 
-await enqueue_job("send_email", to="user@example.com")  # Goes to "short" queue
-await enqueue_job("nightly_report")  # Goes to "long" queue
+# Auto-select queue from JOB_QUEUES mapping
+await enqueue_job("send_email", to="user@example.com")  # → "short" queue
+await enqueue_job("nightly_report")  # → "long" queue
+
+# Override queue explicitly
+await enqueue_job("send_email", queue="long", to="user@example.com")  # → "long" queue
+await enqueue_job("nightly_report", queue="short")  # → "short" queue
+```
+
+### Single worker (all queues)
+
+```python
+# app/workers/arq_worker.py
+from arq import cron
+from arq.connections import RedisSettings
+from app.core.config import settings
+from app.workers.jobs import ALL_JOBS
+from app.workers.history import record_job_start, record_job_result
+
+class WorkerSettings:
+    redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    functions = ALL_JOBS  # Process all queues
+    cron_jobs = [
+        cron(nightly_report, hour=2, minute=0, run_at_startup=False),
+    ]
+    on_job_start = record_job_start
+    after_job_end = record_job_result
+    max_jobs = 20
+    job_timeout = 3600  # Max timeout across all queues
+    max_tries = 3
+```
+
+```bash
+# Single worker processes all queues
+uv run arq app.workers.arq_worker.WorkerSettings
+```
+
+### Multiple workers (per queue)
+
+```python
+# app/workers/arq_worker.py
+from app.workers.queues import QUEUES
+from app.workers.jobs import JOB_QUEUES
+
+def create_worker_settings(queue_name: str):
+    queue = QUEUES[queue_name]
+    jobs = [job for job, q in JOB_QUEUES.items() if q == queue_name]
+    
+    class WorkerSettings:
+        redis_settings = RedisSettings.from_dsn(settings.redis_url)
+        functions = jobs
+        queue_name = queue_name
+        max_jobs = queue.max_jobs
+        job_timeout = queue.timeout
+        on_job_start = record_job_start
+        after_job_end = record_job_result
+    
+    return WorkerSettings
+
+ShortWorker = create_worker_settings("short")
+LongWorker = create_worker_settings("long")
+```
+
+```bash
+# Separate workers per queue
+uv run arq app.workers.arq_worker.ShortWorker &
+uv run arq app.workers.arq_worker.LongWorker &
 ```
 
 ### Docker compose
