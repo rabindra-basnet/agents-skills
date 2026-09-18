@@ -86,3 +86,20 @@ independently from the API (jobs and requests have very different resource/scali
   load balancer/orchestrator to gate traffic — not just "process is running."
 - Structured (JSON) logs to stdout in every environment so the platform's log aggregation (
   CloudWatch, Azure Monitor, Render logs, etc.) can parse them without extra shipping config.
+
+## DO NOT
+
+- **Never** run uvicorn and arq worker in the same container — they must be separate processes.
+- **Never** bake secrets into Docker image layers — use environment variables or a secrets manager.
+- **Never** run as root in containers — use a non-root user.
+- **Never** skip `--frozen` in `uv sync` — it prevents silent lockfile drift.
+- **Never** run migrations automatically on container boot — run as explicit deploy step.
+- **Never** use `allow_hosts: ["*"]` in production — set explicit allowed hosts.
+- **Never** skip health check endpoints (`/healthz`) — they must check DB + Redis connectivity.
+- **Never** use Vercel for this stack — it's serverless with short execution limits, not suited for long-running FastAPI or arq.
+- **Never** use plaintext logs in production — structured JSON to stdout.
+- **Never** skip connection pooling in production — configure `pool_size` and `pool_pre_ping`.
+- **Never** use `--reload` in production — it's for local dev only.
+- **Never** skip the non-root user in Docker — it's a security requirement.
+- **Never** use `POSTGRES_PASSWORD: dev` in production — use a strong, unique password.
+- **Never** skip `depends_on` health checks in docker-compose — services may not be ready.

@@ -172,3 +172,17 @@ jobs:
 
 Run these same commands locally before calling any generated code "done" — the pre-commit hooks
 catch most of it, but CI is the source of truth (e.g. for the full, slower test suite).
+
+## DO NOT
+
+- **Never** skip pre-commit hooks — they exist to catch issues before they reach CI.
+- **Never** use `--no-verify` to bypass git hooks unless you have a documented, temporary reason.
+- **Never** suppress bandit findings with blanket `skips = [...]` — suppress inline with `# nosec` + a reason.
+- **Never** ignore HIGH severity bandit findings — treat them as build blockers.
+- **Never** commit code that fails `ruff check` or `ruff format --check` — fix it first.
+- **Never** add a new feature package without adding it to the `import-linter` independence contract.
+- **Never** run `pytest` with `-x` (stop on first failure) in CI — run full suite to see all failures.
+- **Never** use `# type: ignore` without a specific error code and reason.
+- **Never** commit without Conventional Commits format (`feat:`, `fix:`, `chore:`, etc.).
+- **Never** run quality tools manually in CI if pre-commit catches them — but CI is the source of truth for the full, slower test suite.
+- **Never** treat linting warnings as optional — they are errors in this stack.

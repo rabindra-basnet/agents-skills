@@ -106,3 +106,21 @@ target_metadata = UsersBase.metadata  # or a combined metadata object if you spl
   object storage) into Parquet, and an analytics/reporting endpoint queries that Parquet via
   DuckDB (`duckdb.sql("SELECT ... FROM 'reports/2026-01.parquet'")`) rather than hitting
   Postgres directly for heavy aggregations.
+
+## DO NOT
+
+- **Never** use the legacy `Column(...)` SQLAlchemy style — use `Mapped[...]` / `mapped_column` (2.0+).
+- **Never** create a new connection pool per request — one pool per process, reused.
+- **Never** use synchronous SQLAlchemy in async code — always `AsyncSession` and `create_async_engine`.
+- **Never** use raw SQL with f-string interpolation — use parameterized queries or ORM.
+- **Never** use `session.commit()` inside a repository — commit boundaries live in `service.py`.
+- **Never** let repositories know about each other — orchestration in `service.py`.
+- **Never** run migrations automatically on app boot — run as explicit deploy step.
+- **Never** edit a migration that's already been applied — write a new one.
+- **Never** use DuckDB as a primary database — it's OLAP only, feed it from Postgres exports.
+- **Never** create Redis clients per request — one pool per process, created in app lifespan.
+- **Never** set Redis keys without explicit TTLs for cache-like data.
+- **Never** use `SELECT *` in production code — select only needed columns.
+- **Never** use `expire_on_commit=False` as a workaround for lazy loading issues — understand the session lifecycle.
+- **Never** ignore `pool_pre_ping=True` — it prevents stale connection errors.
+- **Never** store secrets in Redis without encryption at rest.

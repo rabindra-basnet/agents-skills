@@ -115,3 +115,19 @@ provider that returns canned `CompletionResult`s — never hit a real API in uni
 - **Don't** let `app/features/*/service.py` import `openai`/`anthropic` directly — always go
   through `AIProvider`. This is also enforceable as an import-linter `forbidden` contract if
   you want it mechanically checked.
+
+## DO NOT
+
+- **Never** import `openai` or `anthropic` directly in feature code — always go through `AIProvider`.
+- **Never** hit real LLM APIs in unit tests — use a fake provider with canned `CompletionResult`s.
+- **Never** hardcode model names in feature code — use `settings` and pass model as parameter.
+- **Never** skip explicit timeouts on LLM calls — hung requests hold worker/socket slots.
+- **Never** call LLMs inline in request handlers for user-facing features — use arq jobs (unless streaming).
+- **Never** ask the model to "return JSON" in prose — use native structured output / tool-calling mode.
+- **Never** ignore token usage/cost — log every `CompletionResult` with request id, feature, model.
+- **Never** let `base_url` default to `api.openai.com` — make it configurable for Azure OpenAI, OpenRouter, etc.
+- **Never** use `temperature=0.0` by default — let the caller decide based on use case.
+- **Never** parse LLM output without validation — use Pydantic and treat parse failure as retryable.
+- **Never** expose raw provider responses to clients — extract only what's needed.
+- **Never** store API keys in the database — use environment variables or a secrets manager.
+- **Never** let feature code know which provider is being used — that's `AIProvider`'s job.

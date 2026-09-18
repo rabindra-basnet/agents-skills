@@ -101,3 +101,21 @@ Rules of thumb:
   `NotFoundError`, `ConflictError`, `ValidationError`) and map them to HTTP responses in one
   place via FastAPI exception handlers — don't scatter `HTTPException(status_code=...)` through
   service code.
+
+## DO NOT
+
+- **Never** use horizontal layer folders (`models/`, `views/`, `services/`, `repositories/` at the top level). Always vertical slices by feature.
+- **Never** import from another feature's internals (`features/billing/service.py` importing `features/users/repository.py`). Use `shared/` or a narrow public interface.
+- **Never** put business logic in `router.py`. Routers parse input, call service, return output — nothing else.
+- **Never** put SQL queries in `router.py`. All DB access goes through `repository.py`.
+- **Never** use `typing.List`, `typing.Optional`, `typing.Dict` — use `list`, `X | None`, `dict` (Python 3.12+).
+- **Never** use ABCs for dependency inversion — use `Protocol`.
+- **Never** use string path concatenation — use `pathlib.Path`.
+- **Never** scatter `HTTPException(status_code=...)` through service code — use `shared/errors.py` and exception handlers.
+- **Never** use `@dataclass` for anything crossing a boundary (HTTP, LLM, job payloads) — use Pydantic.
+- **Never** skip type annotations on public surfaces (function signatures, Pydantic fields).
+- **Never** use f-strings for log messages — use structured logging with contextual fields.
+- **Never** create a class with no instance state — use module-level functions instead.
+- **Never** hand-edit `pyproject.toml` dependency lists — always use `uv add`.
+- **Never** use pip, poetry, or pipenv — uv is the only package manager.
+- **Never** commit without running quality gates (ruff, bandit, import-linter, tests).

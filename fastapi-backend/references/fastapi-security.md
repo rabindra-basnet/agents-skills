@@ -108,3 +108,21 @@ endpoint specifically (those are the expensive, abusable ones). Return `429` wit
   them into CI, don't rely on manual review.
 - Error responses: return generic error messages to clients (via `shared/errors.py` handlers);
   log full tracebacks server-side only.
+
+## DO NOT
+
+- **Never** use `allow_origins=["*"]` with `allow_credentials=True` — CORS will reject it.
+- **Never** hardcode secrets in code or Docker image layers — use `pydantic-settings` + environment variables.
+- **Never** commit `.env` files — ship `.env.example` with placeholders.
+- **Never** use `Request.json()` and hand-parse — always use Pydantic models for request bodies.
+- **Never** return stack traces or internal error details to clients — generic messages only.
+- **Never** log raw passwords, tokens, or full PII — redact sensitive fields.
+- **Never** use HS256 for JWT if multiple services need to verify tokens — use RS256/ES256.
+- **Never** store refresh tokens as JWTs — use opaque random tokens hashed in Postgres.
+- **Never** trust an id in the request body/path alone for authorization — check against authenticated user.
+- **Never** use f-string interpolation into SQL — always parameterized queries.
+- **Never** disable CORS or security middleware in production.
+- **Never** use `HTTPException` directly in service code — raise domain errors and handle in exception handlers.
+- **Never** skip rate limiting on auth endpoints and AI/LLM-backed endpoints.
+- **Never** trust client-provided filenames for storage paths — generate your own.
+- **Never** store API keys in the database — use environment variables or a secrets manager.

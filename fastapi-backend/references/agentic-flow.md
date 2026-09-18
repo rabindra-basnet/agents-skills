@@ -76,3 +76,18 @@ If someone asks for "an agent" and the real requirement is "summarize this docum
 "classify this ticket," say so and implement the one-call version. Adding orchestration
 machinery to a single-call problem is the most common failure mode in this space — it adds
 latency, cost, and failure surface for no behavioral benefit.
+
+## DO NOT
+
+- **Never** reach for a heavyweight agent framework for a single LLM call — call `AIProvider.complete()` directly.
+- **Never** use provider-locked SDKs (OpenAI Agents SDK, Claude Agent SDK) when the stack supports multiple providers.
+- **Never** run agentic workflows inline in request handlers — they're variable-latency, use arq jobs.
+- **Never** let agent loops run without caps on iteration count and wall-clock time — runaway agents are live incidents.
+- **Never** let a node's LLM call "figure out" the next step's shape — use typed input/output (Pydantic models).
+- **Never** skip logging tool calls and model calls — you need to reconstruct runs for debugging.
+- **Never** use CrewAI/AutoGen for production request paths — they're for internal/ops tools only.
+- **Never** add orchestration to a single-call problem — it adds latency, cost, and failure surface for no benefit.
+- **Never** let LangGraph talk to providers directly — route through this stack's `AIProvider`.
+- **Never** persist intermediate LangGraph state without a clear debugging purpose — it's overhead.
+- **Never** treat "agent" as a feature — treat it as an implementation detail that may or may not be needed.
+- **Never** skip the decision tree — most "agent" requests are actually single-call problems.

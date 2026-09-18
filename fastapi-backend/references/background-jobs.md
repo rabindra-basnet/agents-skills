@@ -110,3 +110,19 @@ await redis.enqueue_job("send_email", to=user.email, template="welcome")
 Never do the actual work inline in the request/response cycle if it involves external I/O
 (email providers, LLM calls, file processing) — enqueue and return immediately; let the worker
 own retries/backoff via arq's `max_tries`/`retry_delay`.
+
+## DO NOT
+
+- **Never** run arq worker inside the uvicorn process — it must be a separate process/container.
+- **Never** do actual work inline in request/response for external I/O — enqueue and return immediately.
+- **Never** rely only on arq's Redis results for audit/history — persist to Postgres `job_executions` table.
+- **Never** log raw job args/results with sensitive data — redact before persisting.
+- **Never** skip `on_job_start`/`after_job_end` hooks — they're your audit trail.
+- **Never** use `max_tries=1` for jobs that call external services — transient failures happen.
+- **Never** set `job_timeout` too high — a hung job holds a worker slot forever.
+- **Never** create a new `httpx.AsyncClient()` per job — reuse one from `ctx["http"]`.
+- **Never** create a new database session per job without proper cleanup — use `AsyncSessionLocal()`.
+- **Never** ignore failed jobs — alert on `status="failed"` in `job_executions`.
+- **Never** use `run_at_startup=True` for cron jobs in production — they should run on schedule only.
+- **Never** store job results in memory — they'll be lost on restart.
+- **Never** use Celery unless you genuinely need multi-language workers or complex routing topologies.
