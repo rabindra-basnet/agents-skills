@@ -1,9 +1,9 @@
 ---
-name: python-backend-scaffold
+name: fastapi-backend
 description: Scaffold or extend a production-grade Python backend service — FastAPI + SQLAlchemy/Alembic + Postgres/Redis/DuckDB + arq background jobs + uv/ruff/bandit/import-linter tooling + optional OpenAI/Anthropic AI integration and agentic flows. Use this whenever the user asks to start a new Python backend/API project, add a FastAPI service, set up a database layer, background job queue, AI/LLM integration, agent workflow, CI-quality tooling, git hooks, or Docker/cloud deployment for a Python backend — even if they only name one piece (e.g. "add alembic migrations" or "set up arq workers") rather than the whole stack. This is a generic, opinionated backend template meant to work consistently whether invoked from Claude, Codex, opencode, aider, qwen-code, or any other terminal coding agent.
 ---
 
-# Python Backend Scaffold
+# FastAPI Backend
 
 A generic, opinionated blueprint for production Python backend services. It fixes the stack, the
 directory shape, and the quality gates so that any terminal coding agent (Claude Code, Codex,
