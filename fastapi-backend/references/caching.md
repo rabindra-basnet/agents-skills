@@ -43,12 +43,17 @@ class Cache:
         await redis.delete(self._key(key))
 
     async def delete_pattern(self, pattern: str) -> int:
-        """Delete all keys matching pattern."""
+        """Delete all keys matching pattern using SCAN (safe for production)."""
         redis = await get_redis()
-        keys = await redis.keys(f"{self.prefix}:{pattern}")
-        if keys:
-            return await redis.delete(*keys)
-        return 0
+        deleted = 0
+        cursor = 0
+        while True:
+            cursor, keys = await redis.scan(cursor, match=f"{self.prefix}:{pattern}", count=100)
+            if keys:
+                deleted += await redis.delete(*keys)
+            if cursor == 0:
+                break
+        return deleted
 ```
 
 ## Cache-aside pattern
@@ -148,14 +153,25 @@ class RateLimiter:
         self.window = window
 
     async def is_allowed(self) -> bool:
+        """Atomic rate limit check using Lua script (no race condition)."""
         redis = await get_redis()
-        current = await redis.incr(f"ratelimit:{self.key}")
-
-        if current == 1:
-            await redis.expire(f"ratelimit:{self.key}", self.window)
-
-        if current > self.limit:
-            logger.warning("Rate limit exceeded", extra={"key": self.key, "count": current})
+        script = """
+        local key = KEYS[1]
+        local limit = tonumber(ARGV[1])
+        local window = tonumber(ARGV[2])
+        local current = tonumber(redis.call('GET', key) or '0')
+        if current >= limit then
+            return 0
+        end
+        current = redis.call('INCR', key)
+        if current == 1 then
+            redis.call('EXPIRE', key, window)
+        end
+        return 1
+        """
+        allowed = await redis.eval(script, 1, f"ratelimit:{self.key}", self.limit, self.window)
+        if not allowed:
+            logger.warning("Rate limit exceeded", extra={"key": self.key})
             return False
         return True
 
@@ -163,6 +179,44 @@ class RateLimiter:
 limiter = RateLimiter(key="api:global", limit=100, window=60)
 if not await limiter.is_allowed():
     raise HTTPException(status_code=429, detail="Too many requests")
+```
+
+## Cache stats
+
+```python
+# app/core/cache.py — add to Cache class
+async def stats(self) -> dict:
+    """Get cache hit/miss stats."""
+    redis = await get_redis()
+    hits = await redis.get(f"{self.prefix}:stats:hits") or 0
+    misses = await redis.get(f"{self.prefix}:stats:misses") or 0
+    total = int(hits) + int(misses)
+    hit_rate = round(int(hits) / total * 100, 2) if total > 0 else 0
+    return {"hits": int(hits), "misses": int(misses), "hit_rate": hit_rate}
+
+async def _record_hit(self) -> None:
+    redis = await get_redis()
+    await redis.incr(f"{self.prefix}:stats:hits")
+
+async def _record_miss(self) -> None:
+    redis = await get_redis()
+    await redis.incr(f"{self.prefix}:stats:misses")
+```
+
+## Serialization
+
+```python
+# Always use JSON — never pickle (security risk)
+import json
+
+# Good — JSON (safe, human-readable)
+data = json.dumps(value, default=str)
+value = json.loads(data)
+
+# Never — pickle (can execute arbitrary code on deserialization)
+import pickle
+pickle.dumps(value)  # DO NOT USE
+pickle.loads(data)   # DO NOT USE
 ```
 
 ## Cache invalidation strategies

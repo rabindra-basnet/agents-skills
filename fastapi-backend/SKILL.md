@@ -56,7 +56,7 @@ both, behind one interface), and how much "agentic" orchestration is actually wa
 | `references/think.md` | Chain-of-thought reasoning for agents |
 | `references/codemode.md` | Sandboxed Python code execution for agents |
 | `references/browse-the-web.md` | Playwright browser automation for agents |
-| `references/mcp.md` | Model Context Protocol server for tool exposure |
+| `references/mcp.md` | Model Context Protocol server for tool exposure — **optional, disabled by default** |
 | `references/server-driven-messages.md` | Server-controlled UI rendering |
 | `references/human-in-the-loop.md` | Agent pause/approve/resume workflow |
 | `references/observability.md` | Prometheus metrics, health checks, alerting |

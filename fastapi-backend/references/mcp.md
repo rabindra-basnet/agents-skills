@@ -1,7 +1,16 @@
-# MCP (Model Context Protocol)
+# MCP (Model Context Protocol) — Optional
+
+> **Disabled by default.** This reference is only relevant if the user explicitly asks to expose
+> tools/resources as MCP servers. Do not include MCP in the default stack.
 
 Expose your tools/resources as MCP servers so AI agents (Claude, Cursor, etc.) can discover
 and call them. Keep MCP thin — delegate to your existing service layer.
+
+## Installation (only when needed)
+
+```bash
+uv add mcp
+```
 
 ## Server setup
 
