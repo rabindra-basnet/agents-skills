@@ -404,98 +404,216 @@ await enqueue_job(
 )
 ```
 
-## Logging configuration
+## Logging configuration (Frappe-style)
 
-### Local logs with TimedRotatingFileHandler
+### Core logging module
 
 ```python
 # app/core/logging.py
 import logging
+import logging.handlers
+import json
 import sys
-from logging.handlers import TimedRotatingFileHandler
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from app.core.config import settings
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
 
-def get_logger(name: str) -> logging.Logger:
-    """Get a logger with both console and file handlers."""
-    logger = logging.getLogger(name)
+# Sensitive fields to redact
+SENSITIVE_FIELDS = {"password", "token", "secret", "api_key", "authorization", "credit_card"}
+
+class JSONFormatter(logging.Formatter):
+    """JSON formatter for structured logging."""
     
-    if logger.handlers:
-        return logger
+    def format(self, record: logging.LogRecord) -> str:
+        log_data: dict[str, Any] = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        
+        # Add extra fields
+        if hasattr(record, "extra_data"):
+            log_data.update(record.extra_data)
+        
+        # Add exception info
+        if record.exc_info and record.exc_info[1]:
+            log_data["exception"] = {
+                "type": type(record.exc_info[1]).__name__,
+                "message": str(record.exc_info[1]),
+                "traceback": traceback.format_exception(*record.exc_info),
+            }
+        
+        # Redact sensitive fields
+        log_data = self._redact_sensitive(log_data)
+        
+        return json.dumps(log_data, default=str)
     
-    logger.setLevel(logging.INFO)
+    def _redact_sensitive(self, data: Any) -> Any:
+        """Recursively redact sensitive fields."""
+        if isinstance(data, dict):
+            return {
+                k: "[REDACTED]" if k.lower() in SENSITIVE_FIELDS else self._redact_sensitive(v)
+                for k, v in data.items()
+            }
+        elif isinstance(data, list):
+            return [self._redact_sensitive(item) for item in data]
+        return data
+
+
+class TextFormatter(logging.Formatter):
+    """Human-readable formatter for development."""
     
-    # Console handler (JSON in prod, human-readable in dev)
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
+        return f"{timestamp} | {record.levelname:8} | {record.name} | {record.getMessage()}"
+
+
+def setup_logging(
+    log_level: str = "INFO",
+    json_output: bool = False,
+    log_dir: Path = LOG_DIR,
+) -> None:
+    """
+    Setup application logging.
+    
+    Args:
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        json_output: Use JSON format (True for prod, False for dev)
+        log_dir: Directory for log files
+    """
+    log_dir.mkdir(exist_ok=True)
+    
+    # Root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper()))
+    
+    # Clear existing handlers
+    root_logger.handlers.clear()
+    
+    # Choose formatter
+    formatter = JSONFormatter() if json_output else TextFormatter()
+    
+    # Console handler
     console = logging.StreamHandler(sys.stdout)
     console.setLevel(logging.INFO)
+    console.setFormatter(formatter)
+    root_logger.addHandler(console)
     
-    # File handler — rotate daily, keep 30 days
-    file_handler = TimedRotatingFileHandler(
-        filename=LOG_DIR / "app.log",
+    # App log — rotate daily, keep 30 days
+    app_handler = logging.handlers.TimedRotatingFileHandler(
+        filename=log_dir / "app.log",
         when="midnight",
         interval=1,
         backupCount=30,
         encoding="utf-8",
     )
-    file_handler.setLevel(logging.INFO)
+    app_handler.setLevel(logging.INFO)
+    app_handler.setFormatter(formatter)
+    root_logger.addHandler(app_handler)
     
-    # Formatter
-    formatter = logging.Formatter(
-        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    # Error log — rotate daily, keep 90 days
+    error_handler = logging.handlers.TimedRotatingFileHandler(
+        filename=log_dir / "error.log",
+        when="midnight",
+        interval=1,
+        backupCount=90,
+        encoding="utf-8",
     )
-    console.setFormatter(formatter)
-    file_handler.setFormatter(formatter)
-    
-    logger.addHandler(console)
-    logger.addHandler(file_handler)
-    
-    return logger
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(formatter)
+    root_logger.addHandler(error_handler)
+
+
+def get_logger(name: str) -> logging.Logger:
+    """Get a logger instance."""
+    return logging.getLogger(name)
 ```
 
-### Worker logs (separate file)
+### Worker logging (separate module)
 
 ```python
 # app/workers/logging.py
-from logging.handlers import TimedRotatingFileHandler
+import logging
+import logging.handlers
 from pathlib import Path
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
 
-def get_worker_logger(name: str) -> logging.Logger:
-    """Get a logger for worker processes."""
-    logger = logging.getLogger(f"worker.{name}")
+def setup_worker_logging(log_level: str = "INFO") -> None:
+    """Setup worker-specific logging."""
+    worker_logger = logging.getLogger("worker")
+    worker_logger.setLevel(getattr(logging, log_level.upper()))
+    worker_logger.handlers.clear()
     
-    if logger.handlers:
-        return logger
-    
-    logger.setLevel(logging.INFO)
-    
-    # Worker-specific log file
-    file_handler = TimedRotatingFileHandler(
+    # Worker log — rotate daily, keep 30 days
+    handler = logging.handlers.TimedRotatingFileHandler(
         filename=LOG_DIR / "worker.log",
         when="midnight",
         interval=1,
         backupCount=30,
         encoding="utf-8",
     )
-    file_handler.setLevel(logging.INFO)
+    handler.setLevel(logging.INFO)
     
     formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-    
-    return logger
+    handler.setFormatter(formatter)
+    worker_logger.addHandler(handler)
+
+
+def get_worker_logger(name: str) -> logging.Logger:
+    """Get a worker logger instance."""
+    return logging.getLogger(f"worker.{name}")
 ```
 
-### Usage in jobs
+### Usage in application
+
+```python
+# app/main.py
+from app.core.logging import setup_logging, get_logger
+
+# Setup on app startup
+setup_logging(
+    log_level=settings.log_level,
+    json_output=settings.environment == "production",
+)
+
+logger = get_logger(__name__)
+
+@app.on_event("startup")
+async def startup():
+    logger.info("Application starting", extra={"environment": settings.environment})
+```
+
+```python
+# app/features/auth/service.py
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+class AuthService:
+    async def register(self, data: UserCreate) -> User:
+        logger.info("User registration started", extra={"email": data.email})
+        try:
+            user = await self._repo.create(data)
+            logger.info("User registered", extra={"user_id": str(user.id)})
+            return user
+        except Exception as e:
+            logger.error("Registration failed", extra={"email": data.email, "error": str(e)})
+            raise
+```
 
 ```python
 # app/workers/jobs/send_email.py
@@ -505,8 +623,13 @@ logger = get_worker_logger(__name__)
 
 async def send_email(ctx: dict, *, to: str, template: str) -> dict:
     logger.info("Sending email", extra={"to": to, "template": template})
-    # ...
-    logger.info("Email sent", extra={"to": to, "template": template})
+    try:
+        # ... send email
+        logger.info("Email sent", extra={"to": to, "template": template})
+        return {"sent": True}
+    except Exception as e:
+        logger.error("Email failed", extra={"to": to, "error": str(e)})
+        raise
 ```
 
 ### Log rotation schedule
