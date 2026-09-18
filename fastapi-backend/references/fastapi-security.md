@@ -125,4 +125,4 @@ endpoint specifically (those are the expensive, abusable ones). Return `429` wit
 - **Never** use `HTTPException` directly in service code — raise domain errors and handle in exception handlers.
 - **Never** skip rate limiting on auth endpoints and AI/LLM-backed endpoints.
 - **Never** trust client-provided filenames for storage paths — generate your own.
-- **Never** store API keys in the database — use environment variables or a secrets manager.
+- **Never** store API keys or secrets in Redis — use a dedicated `secrets` table in Postgres with encryption at rest, or a secrets manager (AWS Secrets Manager, Azure Key Vault).

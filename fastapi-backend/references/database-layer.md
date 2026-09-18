@@ -123,4 +123,4 @@ target_metadata = UsersBase.metadata  # or a combined metadata object if you spl
 - **Never** use `SELECT *` in production code — select only needed columns.
 - **Never** use `expire_on_commit=False` as a workaround for lazy loading issues — understand the session lifecycle.
 - **Never** ignore `pool_pre_ping=True` — it prevents stale connection errors.
-- **Never** store secrets in Redis without encryption at rest.
+- **Never** store secrets in Redis — use a dedicated `secrets` table in Postgres with encryption at rest, or a secrets manager (AWS Secrets Manager, Azure Key Vault).

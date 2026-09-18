@@ -129,5 +129,5 @@ provider that returns canned `CompletionResult`s — never hit a real API in uni
 - **Never** use `temperature=0.0` by default — let the caller decide based on use case.
 - **Never** parse LLM output without validation — use Pydantic and treat parse failure as retryable.
 - **Never** expose raw provider responses to clients — extract only what's needed.
-- **Never** store API keys in the database — use environment variables or a secrets manager.
+- **Never** store API keys in Redis — use a dedicated `secrets` table in Postgres with encryption at rest, or a secrets manager.
 - **Never** let feature code know which provider is being used — that's `AIProvider`'s job.
