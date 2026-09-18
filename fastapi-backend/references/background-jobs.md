@@ -286,6 +286,9 @@ class WorkerSettings:
 
 ## Enqueuing from the API
 
+Frappe-style `enqueue_job` — accept both function references and string names,
+with queue selection, timeouts, callbacks, and automatic logging.
+
 ```python
 # app/workers/enqueue.py
 from typing import Callable
@@ -296,7 +299,6 @@ logger = get_logger(__name__)
 
 async def enqueue_job(
     method: str | Callable,
-    *,
     queue: str = "default",
     timeout: int | None = None,
     on_success: Callable | None = None,
@@ -362,7 +364,7 @@ async def enqueue_job(
     return await redis.enqueue_job(job_name, **enqueue_kwargs, **kwargs)
 ```
 
-### Usage
+### Usage (Frappe-style)
 
 ```python
 # app/features/auth/service.py
@@ -372,9 +374,10 @@ class AuthService:
     async def register(self, data: UserCreate) -> User:
         user = await self._repo.create(data)
         
+        # Frappe-style: method, queue, then kwargs
         await enqueue_job(
             "app.workers.jobs.send_email",
-            queue="short",
+            "short",
             to=user.email,
             template="welcome",
             subject="Welcome!",
@@ -384,14 +387,21 @@ class AuthService:
 ```
 
 ```python
-# Override queue
-await enqueue_job("send_email", queue="long", to="user@example.com")
+# With timeout
+await enqueue_job("nightly_report", "long", timeout=7200)
 
-# Override timeout
-await enqueue_job("nightly_report", queue="long", timeout=7200)
+# With deduplication
+await enqueue_job("sync_data", "short", job_id="sync-daily", deduplicate=True)
 
-# Deduplication
-await enqueue_job("sync_data", queue="short", job_id="sync-daily", deduplicate=True)
+# With callbacks
+await enqueue_job(
+    "process_payment",
+    "long",
+    on_success=payment_success_handler,
+    on_failure=payment_failure_handler,
+    amount=100,
+    user_id="user-123",
+)
 ```
 
 Never do the actual work inline in the request/response cycle if it involves external I/O
