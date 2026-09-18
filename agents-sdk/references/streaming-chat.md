@@ -1,175 +1,137 @@
-# Streaming Chat with AIChatAgent
+# Streaming Chat with ChatAgent
 
-Fetch https://developers.cloudflare.com/agents/api-reference/chat-agents/ for complete documentation.
-
-`AIChatAgent` from `@cloudflare/ai-chat` provides streaming chat with automatic message persistence and resumable streams.
+`ChatAgent` provides streaming chat with automatic message persistence and resumable streams.
 
 ## Basic Chat Agent
 
-```typescript
-import { AIChatAgent } from "@cloudflare/ai-chat";
-import { streamText, convertToModelMessages } from "ai";
-import { openai } from "@ai-sdk/openai";
+```python
+from agents_sdk import ChatAgent
+from openai import OpenAI
 
-export class Chat extends AIChatAgent<Env> {
-  async onChatMessage(onFinish, options) {
-    const result = streamText({
-      model: openai("gpt-4o"),
-      system: "You are a helpful assistant.",
-      messages: await convertToModelMessages(this.messages),
-      abortSignal: options?.abortSignal,
-      onFinish
-    });
-    return result.toUIMessageStreamResponse();
-  }
-}
+class Chat(ChatAgent):
+    def __init__(self):
+        super().__init__()
+        self.client = OpenAI()
+
+    async def on_chat_message(self, on_finish, options=None):
+        result = self.client.chat.completions.create(
+            model="gpt-4o",
+            system="You are a helpful assistant.",
+            messages=self.messages,
+            stream=True
+        )
+        
+        for chunk in result:
+            if chunk.choices[0].delta.content:
+                await self.send(chunk.choices[0].delta.content)
+        
+        on_finish()
 ```
 
-**Important:** Always pass `abortSignal` and `onFinish` — they enable proper cleanup and message persistence.
+**Important:** Always pass `abort_signal` and `on_finish` — they enable proper cleanup and message persistence.
 
 ## With Tools
 
-```typescript
-import { tool } from "ai";
-import { z } from "zod";
+```python
+from agents_sdk import ChatAgent, tool
+from pydantic import BaseModel
 
-const tools = {
-  getWeather: tool({
-    description: "Get weather for a location",
-    parameters: z.object({ location: z.string() }),
-    execute: async ({ location }) => `Weather in ${location}: 72°F, sunny`
-  })
-};
+class WeatherInput(BaseModel):
+    location: str
 
-export class Chat extends AIChatAgent<Env> {
-  async onChatMessage(onFinish, options) {
-    const result = streamText({
-      model: openai("gpt-4o"),
-      messages: await convertToModelMessages(this.messages),
-      tools,
-      abortSignal: options?.abortSignal,
-      onFinish
-    });
-    return result.toUIMessageStreamResponse();
-  }
-}
-```
+@tool(description="Get weather for a location")
+async def get_weather(input: WeatherInput) -> str:
+    return f"Weather in {input.location}: 72°F, sunny"
 
-## With Workers AI (no API keys)
+class Chat(ChatAgent):
+    def __init__(self):
+        super().__init__()
+        self.tools = [get_weather]
 
-```typescript
-import { createWorkersAI } from "workers-ai-provider";
-
-export class Chat extends AIChatAgent<Env> {
-  async onChatMessage(onFinish, options) {
-    const workersai = createWorkersAI({ binding: this.env.AI });
-    const result = streamText({
-      model: workersai("@cf/meta/llama-4-scout-17b-16e-instruct"),
-      messages: await convertToModelMessages(this.messages),
-      abortSignal: options?.abortSignal,
-      onFinish
-    });
-    return result.toUIMessageStreamResponse();
-  }
-}
-```
-
-## Custom UI Message Stream
-
-For more control, use `createUIMessageStream`:
-
-```typescript
-import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
-
-export class Chat extends AIChatAgent<Env> {
-  async onChatMessage(onFinish) {
-    const stream = createUIMessageStream({
-      execute: async ({ writer }) => {
-        const result = streamText({
-          model: openai("gpt-4o"),
-          messages: await convertToModelMessages(this.messages),
-          onFinish
-        });
-        writer.merge(result.toUIMessageStream());
-      }
-    });
-    return createUIMessageStreamResponse({ stream });
-  }
-}
+    async def on_chat_message(self, on_finish, options=None):
+        # Tool handling is automatic
+        result = await self.stream_with_tools(
+            model="gpt-4o",
+            messages=self.messages,
+            tools=self.tools
+        )
+        on_finish()
 ```
 
 ## Resumable Streaming
 
 Streams automatically resume if client disconnects and reconnects:
 
-1. Chunks buffered to SQLite during streaming
+1. Chunks buffered to storage during streaming
 2. On reconnect, buffered chunks sent immediately
 3. Live streaming continues from where it left off
 
 **Enabled by default.** To disable:
 
-```tsx
-const { messages } = useAgentChat({ agent, resume: false });
+```python
+agent = Chat(resume=False)
 ```
 
-## React Client
+## HTTP Client
 
-```tsx
-import { useAgent } from "agents/react";
-import { useAgentChat } from "@cloudflare/ai-chat/react";
+```python
+import requests
 
-function ChatUI() {
-  const agent = useAgent({
-    agent: "Chat",
-    name: "my-chat-session"
-  });
+# Send message
+response = requests.post(
+    "http://localhost:3000/agents/chat/my-session/message",
+    json={"content": "Hello!"}
+)
 
-  const { 
-    messages, 
-    input, 
-    handleInputChange, 
-    handleSubmit, 
-    status 
-  } = useAgentChat({ agent });
+# Stream response
+response = requests.post(
+    "http://localhost:3000/agents/chat/my-session/message",
+    json={"content": "Hello!"},
+    stream=True
+)
 
-  return (
-    <div>
-      {messages.map((m) => (
-        <div key={m.id}>
-          <strong>{m.role}:</strong> {m.content}
-        </div>
-      ))}
-      
-      <form onSubmit={handleSubmit}>
-        <input 
-          value={input} 
-          onChange={handleInputChange}
-          disabled={status === "streaming"}
-        />
-        <button type="submit">Send</button>
-      </form>
-    </div>
-  );
-}
+for chunk in response.iter_lines():
+    if chunk:
+        print(chunk.decode())
+```
+
+## WebSocket Client
+
+```python
+import websockets
+import json
+
+async def chat():
+    async with websockets.connect("ws://localhost:3000/agents/chat/my-session") as ws:
+        # Send message
+        await ws.send(json.dumps({
+            "type": "message",
+            "content": "Hello!"
+        }))
+        
+        # Receive streamed response
+        while True:
+            message = await ws.recv()
+            data = json.loads(message)
+            if data.get("type") == "done":
+                break
+            print(data.get("content", ""), end="")
 ```
 
 ## Streaming RPC Methods
 
-For non-chat streaming, use `@callable({ streaming: true })`:
+For non-chat streaming, use `@callable(streaming=True)`:
 
-```typescript
-import { Agent, callable, StreamingResponse } from "agents";
+```python
+from agents_sdk import Agent, callable, StreamingResponse
 
-export class MyAgent extends Agent<Env> {
-  @callable({ streaming: true })
-  async streamData(stream: StreamingResponse, query: string) {
-    for (let i = 0; i < 10; i++) {
-      stream.send(`Result ${i}: ${query}`);
-      await sleep(100);
-    }
-    stream.close();
-  }
-}
+class MyAgent(Agent):
+    @callable(streaming=True)
+    async def stream_data(self, stream: StreamingResponse, query: str):
+        for i in range(10):
+            await stream.send(f"Result {i}: {query}")
+            await asyncio.sleep(0.1)
+        await stream.close()
 ```
 
 Client receives streamed messages via WebSocket RPC.
@@ -178,15 +140,12 @@ Client receives streamed messages via WebSocket RPC.
 
 | Property | Purpose |
 |----------|---------|
-| `this.messages` | All persisted messages |
-| `maxPersistedMessages` | Limit stored messages (prune oldest) |
-| `messageConcurrency` | `"queue"` (default), `"latest"`, `"merge"`, `"drop"` |
-| `chatRecovery` | `"persist"` (default) or `"continue"` on reconnect |
-| `waitForMcpConnections` | Wait for MCP servers before first turn |
+| `self.messages` | All persisted messages |
+| `max_persisted_messages` | Limit stored messages (prune oldest) |
+| `message_concurrency` | `"queue"` (default), `"latest"`, `"merge"`, `"drop"` |
+| `chat_recovery` | `"persist"` (default) or `"continue"` on reconnect |
 
 ## Status Values
-
-`useAgentChat` status:
 
 | Status | Meaning |
 |--------|---------|
@@ -194,5 +153,3 @@ Client receives streamed messages via WebSocket RPC.
 | `streaming` | Response streaming |
 | `submitted` | Request sent, waiting |
 | `error` | Error occurred |
-
-Also: `isStreaming`, `isServerStreaming` for distinguishing user vs server-initiated streams.

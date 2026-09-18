@@ -1,7 +1,5 @@
 # Workflows Integration
 
-Fetch https://developers.cloudflare.com/agents/api-reference/run-workflows/ for complete documentation.
-
 ## Overview
 
 Agents handle real-time communication; Workflows handle durable execution. Together they enable:
@@ -20,113 +18,99 @@ Agents handle real-time communication; Workflows handle durable execution. Toget
 
 ## AgentWorkflow Base Class
 
-```typescript
-import { AgentWorkflow } from "agents/workflows";
-import type { AgentWorkflowEvent, AgentWorkflowStep } from "agents/workflows";
+```python
+from agents_sdk import AgentWorkflow, workflow_step
 
-type TaskParams = { taskId: string; data: string };
-
-export class ProcessingWorkflow extends AgentWorkflow<MyAgent, TaskParams> {
-  async run(event: AgentWorkflowEvent<TaskParams>, step: AgentWorkflowStep) {
-    const params = event.payload;
-
-    // Durable step - retries on failure
-    const result = await step.do("process", async () => {
-      return processData(params.data);
-    });
-
-    // Non-durable: progress reporting
-    await this.reportProgress({ step: "process", percent: 0.5 });
-
-    // Non-durable: broadcast to connected clients
-    this.broadcastToClients({ type: "update", taskId: params.taskId });
-
-    // Durable: merge state via step
-    await step.mergeAgentState({ lastProcessed: params.taskId });
-
-    // Durable: report completion
-    await step.reportComplete(result);
-
-    return result;
-  }
-}
+class ProcessingWorkflow(AgentWorkflow):
+    @workflow_step("process")
+    async def process(self, params: dict, step):
+        # Durable step - retries on failure
+        result = await step.do("process", lambda: processData(params["data"]))
+        
+        # Non-durable: progress reporting
+        await self.report_progress({"step": "process", "percent": 0.5})
+        
+        # Non-durable: broadcast to connected clients
+        self.broadcast_to_clients({"type": "update", "task_id": params["task_id"]})
+        
+        # Durable: merge state via step
+        await step.merge_agent_state({"last_processed": params["task_id"]})
+        
+        # Durable: report completion
+        await step.report_complete(result)
+        
+        return result
 ```
 
-## Wrangler Configuration
+## Configuration
 
-```jsonc
-{
-  "workflows": [
-    { "name": "processing-workflow", "binding": "PROCESSING_WORKFLOW", "class_name": "ProcessingWorkflow" }
-  ],
-  "durable_objects": {
-    "bindings": [{ "name": "MyAgent", "class_name": "MyAgent" }]
-  },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MyAgent"] }]
-}
+```python
+from agents_sdk import AgentManager
+
+manager = AgentManager()
+
+@manager.workflow("processing-workflow")
+class ProcessingWorkflow(AgentWorkflow):
+    # ... workflow implementation
+    pass
 ```
 
 ## Agent Methods for Workflows
 
-```typescript
-// Start a workflow
-const instance = await this.runWorkflow("ProcessingWorkflow", { taskId: "123", data: "..." });
+```python
+# Start a workflow
+instance = await self.run_workflow("ProcessingWorkflow", {"task_id": "123", "data": "..."})
 
-// Send event to waiting workflow
-await this.sendWorkflowEvent("ProcessingWorkflow", workflowId, { type: "approve" });
+# Send event to waiting workflow
+await self.send_workflow_event("ProcessingWorkflow", workflow_id, {"type": "approve"})
 
-// Query workflows
-const workflow = await this.getWorkflow(workflowId);
-const workflows = await this.getWorkflows({ status: "running" });
+# Query workflows
+workflow = await self.get_workflow(workflow_id)
+workflows = await self.get_workflows(status="running")
 
-// Control workflows
-await this.approveWorkflow(workflowId);
-await this.rejectWorkflow(workflowId);
-await this.terminateWorkflow(workflowId);
-await this.pauseWorkflow(workflowId);
-await this.resumeWorkflow(workflowId);
+# Control workflows
+await self.approve_workflow(workflow_id)
+await self.reject_workflow(workflow_id)
+await self.terminate_workflow(workflow_id)
+await self.pause_workflow(workflow_id)
+await self.resume_workflow(workflow_id)
 
-// Delete workflows
-await this.deleteWorkflow(workflowId);
-await this.deleteWorkflows({ status: "complete", before: new Date(...) });
+# Delete workflows
+await self.delete_workflow(workflow_id)
+await self.delete_workflows(status="complete", before=datetime.now())
 ```
 
 ## Lifecycle Callbacks
 
-```typescript
-export class MyAgent extends Agent<Env, State> {
-  async onWorkflowProgress(workflowName: string, workflowId: string, progress: unknown) {
-    // Workflow reported progress via this.reportProgress()
-    this.broadcast({ type: "progress", workflowId, progress });
-  }
+```python
+class MyAgent(Agent):
+    async def on_workflow_progress(self, workflow_name: str, workflow_id: str, progress: dict):
+        # Workflow reported progress via self.report_progress()
+        self.broadcast({"type": "progress", "workflow_id": workflow_id, "progress": progress})
 
-  async onWorkflowComplete(workflowName: string, workflowId: string, result?: unknown) {
-    // Workflow finished successfully
-  }
+    async def on_workflow_complete(self, workflow_name: str, workflow_id: str, result=None):
+        # Workflow finished successfully
+        pass
 
-  async onWorkflowError(workflowName: string, workflowId: string, error: Error) {
-    // Workflow failed
-  }
+    async def on_workflow_error(self, workflow_name: str, workflow_id: str, error: Exception):
+        # Workflow failed
+        pass
 
-  async onWorkflowEvent(workflowName: string, workflowId: string, event: unknown) {
-    // Workflow received an event via sendWorkflowEvent()
-  }
-}
+    async def on_workflow_event(self, workflow_name: str, workflow_id: str, event: dict):
+        # Workflow received an event via self.send_workflow_event()
+        pass
 ```
 
 ## Human-in-the-Loop
 
-```typescript
-// In workflow: wait for approval
-const approved = await step.waitForEvent<{ approved: boolean }>("approval", {
-  timeout: "7d"
-});
+```python
+# In workflow: wait for approval
+approved = await step.wait_for_event("approval", timeout_days=7)
 
-if (!approved.approved) {
-  throw new Error("Rejected");
-}
+if not approved.get("approved"):
+    raise ValueError("Rejected")
 
-// From agent: approve or reject
-await this.approveWorkflow(workflowId);  // Sends { approved: true }
-await this.rejectWorkflow(workflowId);   // Sends { approved: false }
+# From agent: approve or reject
+await self.approve_workflow(workflow_id)  # Sends {"approved": True}
+await self.reject_workflow(workflow_id)   # Sends {"approved": False}
 ```

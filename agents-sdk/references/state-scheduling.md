@@ -1,94 +1,88 @@
 # State & Scheduling
 
-Fetch https://developers.cloudflare.com/agents/api-reference/store-and-sync-state/ and https://developers.cloudflare.com/agents/api-reference/schedule-tasks/ for complete documentation.
-
 ## State Management
 
-State persists to SQLite and broadcasts to connected clients automatically.
+State persists to storage and broadcasts to connected clients automatically.
 
 ### Define Typed State
 
-```typescript
-type State = { 
-  count: number;
-  items: string[];
-};
+```python
+from agents_sdk import State
 
-export class MyAgent extends Agent<Env, State> {
-  initialState: State = { count: 0, items: [] };
-}
+class MyState(State):
+    count: int = 0
+    items: list[str] = []
 ```
 
 ### Read and Update
 
-```typescript
-// Read (lazy-loaded from SQLite)
-const count = this.state.count;
-
-// Write (sync, persists, broadcasts)
-this.setState({ count: this.state.count + 1 });
+```python
+class MyAgent(Agent[MyState]):
+    def increment(self) -> int:
+        # Read
+        count = self.state.count
+        
+        # Write (sync, persists, broadcasts)
+        self.set_state(MyState(count=count + 1))
+        return self.state.count
 ```
 
 ### Validation Hook
 
-`validateStateChange()` runs synchronously before state persists. Throw to reject the update.
+`validate_state_change()` runs synchronously before state persists. Raise to reject the update.
 
-```typescript
-validateStateChange(nextState: State, source: Connection | "server") {
-  if (nextState.count < 0) {
-    throw new Error("Count cannot be negative");
-  }
-}
+```python
+class MyAgent(Agent[MyState]):
+    def validate_state_change(self, next_state: MyState, source: str):
+        if next_state.count < 0:
+            raise ValueError("Count cannot be negative")
 ```
 
 ### Execution Order
 
-1. `validateStateChange(nextState, source)` - sync, gating
-2. State persisted to SQLite
+1. `validate_state_change(next_state, source)` - sync, gating
+2. State persisted to storage
 3. State broadcast to connected clients
-4. `onStateUpdate(nextState, source)` - async via `ctx.waitUntil`, non-gating
+4. `on_state_update(next_state, source)` - async, non-gating
 
-### Client-Side Sync (React)
+### Client-Side Sync
 
-```tsx
-import { useAgent } from "agents/react";
+```python
+import requests
 
-function App() {
-  const [state, setLocalState] = useState<State>({ count: 0 });
-  
-  const agent = useAgent<State>({
-    agent: "MyAgent",
-    name: "instance-1",
-    onStateUpdate: (newState) => setLocalState(newState)
-  });
+# WebSocket connection for real-time sync
+ws = websocket.WebSocket()
+ws.connect("ws://localhost:3000/agents/my-agent/instance-1")
 
-  return <button onClick={() => agent.setState({ count: state.count + 1 })}>
-    Count: {state.count}
-  </button>;
-}
+# Receive state updates
+while True:
+    message = ws.recv()
+    state = json.loads(message)
+    print(f"State: {state}")
 ```
 
 ## SQL API
 
-Direct SQLite access for custom queries:
+Direct SQLite access for custom queries (when using SQLite storage):
 
-```typescript
-// Create table
-this.sql`
-  CREATE TABLE IF NOT EXISTS items (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    created_at INTEGER DEFAULT (unixepoch())
-  )
-`;
+```python
+# Create table
+self.sql("""
+    CREATE TABLE IF NOT EXISTS items (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        created_at INTEGER DEFAULT (unixepoch())
+    )
+""")
 
-// Insert
-this.sql`INSERT INTO items (id, name) VALUES (${id}, ${name})`;
+# Insert
+self.sql("INSERT INTO items (id, name) VALUES (?, ?)", id, name)
 
-// Query with types
-const items = this.sql<{ id: string; name: string }>`
-  SELECT * FROM items WHERE name LIKE ${`%${search}%`}
-`;
+# Query with types
+items = self.sql(
+    "SELECT * FROM items WHERE name LIKE ?",
+    f"%{search}%"
+)
 ```
 
 ## Scheduling
@@ -97,75 +91,74 @@ const items = this.sql<{ id: string; name: string }>`
 
 | Mode | Syntax | Use Case |
 |------|--------|----------|
-| Delay | `this.schedule(60, ...)` | Run in 60 seconds |
-| Date | `this.schedule(new Date(...), ...)` | Run at specific time |
-| Cron | `this.schedule("0 8 * * *", ...)` | Recurring schedule |
-| Interval | `this.scheduleEvery(30, ...)` | Fixed interval (every 30s) |
+| Delay | `self.schedule(60, ...)` | Run in 60 seconds |
+| Date | `self.schedule(datetime(...), ...)` | Run at specific time |
+| Cron | `self.schedule("0 8 * * *", ...)` | Recurring schedule |
+| Interval | `self.schedule_every(30, ...)` | Fixed interval (every 30s) |
 
 ### Examples
 
-```typescript
-// Delay (seconds)
-await this.schedule(60, "checkStatus", { id: "abc123" });
+```python
+from datetime import datetime, timedelta
 
-// Specific date
-await this.schedule(new Date("2025-12-25T00:00:00Z"), "sendGreeting", { to: "user" });
+# Delay (seconds)
+await self.schedule(60, "check_status", {"id": "abc123"})
 
-// Cron (recurring)
-await this.schedule("0 9 * * 1-5", "weekdayReport", {});
+# Specific date
+await self.schedule(datetime(2025, 12, 25), "send_greeting", {"to": "user"})
 
-// Fixed interval (every 30 seconds, overlap prevention built-in)
-await this.scheduleEvery(30, "pollUpdates");
-await this.scheduleEvery(300, "syncData", { source: "api" });
+# Cron (recurring)
+await self.schedule("0 9 * * 1-5", "weekday_report", {})
+
+# Fixed interval (every 30 seconds, overlap prevention built-in)
+await self.schedule_every(30, "poll_updates")
+await self.schedule_every(300, "sync_data", {"source": "api"})
 ```
 
 ### Handler
 
-```typescript
-async sendGreeting(payload: { to: string }, schedule: Schedule) {
-  console.log(`Sending greeting to ${payload.to}`);
-  // Cron schedules auto-reschedule; one-time schedules are deleted
-}
+```python
+async def send_greeting(self, payload: dict, schedule: Schedule):
+    print(f"Sending greeting to {payload['to']}")
+    # Cron schedules auto-reschedule; one-time schedules are deleted
 ```
 
 ### Manage Schedules
 
-```typescript
-const schedules = this.getSchedules();
-const crons = this.getSchedules({ type: "cron" });
-await this.cancelSchedule(schedule.id);
+```python
+schedules = self.get_schedules()
+crons = self.get_schedules(type="cron")
+await self.cancel_schedule(schedule.id)
 ```
 
 ### Retry on Schedules
 
-```typescript
-await this.schedule(60, "task", payload, { retry: { maxAttempts: 3 } });
-await this.scheduleEvery(30, "poll", undefined, { retry: { maxAttempts: 2 } });
+```python
+await self.schedule(60, "task", payload, retry={"max_attempts": 3})
+await self.schedule_every(30, "poll", retry={"max_attempts": 2})
 ```
 
 ## Lifecycle Callbacks
 
-```typescript
-export class MyAgent extends Agent<Env, State> {
-  async onStart() {
-    // Agent started or woke from hibernation
-  }
+```python
+class MyAgent(Agent[MyState]):
+    async def on_start(self):
+        # Agent started or woke from hibernation
+        pass
 
-  onConnect(conn: Connection, ctx: ConnectionContext) {
-    // WebSocket connected
-  }
+    def on_connect(self, conn: Connection, ctx: ConnectionContext):
+        # WebSocket connected
+        pass
 
-  onMessage(conn: Connection, message: WSMessage) {
-    // WebSocket message (non-RPC)
-  }
+    def on_message(self, conn: Connection, message: str):
+        # WebSocket message (non-RPC)
+        pass
 
-  onStateUpdate(state: State, source: Connection | "server") {
-    // State changed (async, non-blocking)
-  }
+    def on_state_update(self, state: MyState, source: str):
+        # State changed (async, non-blocking)
+        pass
 
-  onError(error: unknown) {
-    // Error handler
-    throw error; // Re-throw to propagate
-  }
-}
+    def on_error(self, error: Exception):
+        # Error handler
+        raise error  # Re-raise to propagate
 ```

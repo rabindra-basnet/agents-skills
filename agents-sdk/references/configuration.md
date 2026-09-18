@@ -1,72 +1,125 @@
 # Configuration
 
-Fetch https://developers.cloudflare.com/agents/api-reference/configuration/ for complete documentation.
+## Generic Config
 
-## Wrangler Config (`wrangler.jsonc`)
+```python
+# agent_config.py
+from agents_sdk import define_config
 
-```jsonc
-{
-  "name": "my-agent",
-  "main": "src/index.ts",
-  "compatibility_date": "2025-01-28",
-  "compatibility_flags": ["nodejs_compat"],
-  "durable_objects": {
-    "bindings": [
-      { "name": "MyAgent", "class_name": "MyAgent" },
-      { "name": "ChatAgent", "class_name": "ChatAgent" }
-    ]
-  },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["MyAgent", "ChatAgent"] }
-  ],
-  "ai": { "binding": "AI" },
-  "assets": {
-    "directory": "./dist/client",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": true
-  }
-}
+config = define_config(
+    name="my-agent",
+    storage={
+        "type": "sqlite",  # or "postgresql", "dynamodb", "redis"
+        "database": "./data/agents.db"
+    },
+    state={
+        "sync": True,        # auto-sync state to clients
+        "validate": True     # run validate_state_change on updates
+    }
+)
 ```
 
-## Key Rules
+## Provider Adapters
 
-- Every agent class needs a DO binding AND a `new_sqlite_classes` migration entry
-- `nodejs_compat` is required
-- Never edit old migrations — add a new tag (e.g. `v2`) for new classes
-- Do NOT enable `experimentalDecorators` in tsconfig — it breaks `@callable`
-- For Workers AI locally, set `"ai": { "binding": "AI", "remote": true }` in `.dev.vars` or config
-- Use `wrangler secret put` for secrets, never hardcode them
+### AWS Lambda
 
-## Vite Setup
+```python
+from agents_sdk.aws import create_agent
 
-```typescript
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import { cloudflare } from "@cloudflare/vite-plugin";
-import { agents } from "agents/vite";
-
-export default defineConfig({
-  plugins: [react(), cloudflare(), agents()]
-});
+handler = create_agent(
+    storage={
+        "type": "dynamodb",
+        "table_name": "agents-state"
+    }
+)
 ```
 
-## Type Generation
+### Google Cloud Run
+
+```python
+from agents_sdk.gcp import create_agent
+
+app = create_agent(
+    storage={
+        "type": "firestore",
+        "collection": "agents-state"
+    }
+)
+```
+
+### Azure Functions
+
+```python
+from agents_sdk.azure import create_agent
+
+handler = create_agent(
+    storage={
+        "type": "cosmosdb",
+        "database": "agents",
+        "container": "state"
+    }
+)
+```
+
+### Railway / Fly.io
+
+```python
+from agents_sdk import create_agent
+
+app = create_agent(
+    storage={
+        "type": "postgresql",
+        "url": os.environ["DATABASE_URL"]
+    }
+)
+```
+
+### Self-hosted
+
+```python
+from agents_sdk.server import create_agent
+
+app = create_agent(
+    storage={
+        "type": "sqlite",
+        "database": "./data/agents.db"
+    }
+)
+
+if __name__ == "__main__":
+    app.run(port=3000)
+```
+
+## Environment Variables
 
 ```bash
-npx wrangler types
+# Storage
+DATABASE_URL=postgresql://user:pass@localhost/agents
+REDIS_URL=redis://localhost:6379
+
+# AI Providers
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Agent Settings
+AGENT_SECRET_KEY=your-secret-key
 ```
 
-This generates `env.d.ts` with typed bindings. Regenerate after changing `wrangler.jsonc`.
+## pyproject.toml
 
-## tsconfig
+```toml
+[project]
+name = "my-agent"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "agents-sdk[chat]",
+    "fastapi",
+    "uvicorn",
+]
 
-Extend the agents tsconfig for correct settings:
-
-```jsonc
-{
-  "extends": ["agents/tsconfig"],
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "compilerOptions": { "paths": { "~/*": ["./src/*"] } }
-}
+[project.optional-dependencies]
+aws = ["agents-sdk[aws]"]
+gcp = ["agents-sdk[gcp]"]
+azure = ["agents-sdk[azure]"]
 ```

@@ -1,221 +1,165 @@
 ---
 name: agents-sdk
-description: Build AI agents on Cloudflare Workers using the Agents SDK. Load when creating stateful agents, durable workflows, real-time WebSocket apps, scheduled tasks, MCP servers, chat applications, voice agents, or browser automation. Covers Agent class, state management, callable RPC, Workflows, durable execution, queues, retries, observability, and React hooks. Biases towards retrieval from Cloudflare docs over pre-trained knowledge.
+description: Build AI agents in Python that work with any provider (AWS, GCP, Azure, self-hosted, etc.). Load when creating stateful agents, durable workflows, scheduled tasks, MCP servers, chat applications, voice agents, or browser automation. Covers Agent class, state management, callable RPC, Workflows, durable execution, queues, retries, and observability.
 ---
 
-# Cloudflare Agents SDK
+# Agent SDK (Python)
 
-Your knowledge of the Agents SDK may be outdated. **Prefer retrieval over pre-training** for any Agents SDK task.
+Provider-agnostic Python SDK for building AI agents that can be deployed anywhere.
 
-## Retrieval Sources
+## Core Concepts
 
-Cloudflare docs: https://developers.cloudflare.com/agents/
-
-| Topic | Docs URL | Use for |
-|-------|----------|---------|
-| Getting started | [Quick start](https://developers.cloudflare.com/agents/getting-started/quick-start/) | First agent, project setup |
-| Adding to existing project | [Add to existing project](https://developers.cloudflare.com/agents/getting-started/add-to-existing-project/) | Install into existing Workers app |
-| Configuration | [Configuration](https://developers.cloudflare.com/agents/api-reference/configuration/) | `wrangler.jsonc`, bindings, assets, deployment |
-| Agent class | [Agents API](https://developers.cloudflare.com/agents/api-reference/agents-api/) | Agent lifecycle, patterns, pitfalls |
-| State | [Store and sync state](https://developers.cloudflare.com/agents/api-reference/store-and-sync-state/) | `setState`, `validateStateChange`, persistence |
-| Routing | [Routing](https://developers.cloudflare.com/agents/api-reference/routing/) | URL patterns, `routeAgentRequest` |
-| Callable methods | [Callable methods](https://developers.cloudflare.com/agents/api-reference/callable-methods/) | `@callable`, RPC, streaming, timeouts |
-| Scheduling | [Schedule tasks](https://developers.cloudflare.com/agents/api-reference/schedule-tasks/) | `schedule()`, `scheduleEvery()`, cron |
-| Workflows | [Run workflows](https://developers.cloudflare.com/agents/api-reference/run-workflows/) | `AgentWorkflow`, durable multi-step tasks |
-| HTTP/WebSockets | [WebSockets](https://developers.cloudflare.com/agents/api-reference/websockets/) | Lifecycle hooks, hibernation |
-| Chat agents | [Chat agents](https://developers.cloudflare.com/agents/api-reference/chat-agents/) | `AIChatAgent`, streaming, tools, persistence |
-| Client SDK | [Client SDK](https://developers.cloudflare.com/agents/api-reference/client-sdk/) | `useAgent`, `useAgentChat`, React hooks |
-| Client tools | [Client tools](https://developers.cloudflare.com/agents/api-reference/client-tools/) | Client-side tools, `autoContinueAfterToolResult` |
-| Server-driven messages | [Trigger patterns](https://developers.cloudflare.com/agents/api-reference/trigger-patterns/) | `saveMessages`, `waitUntilStable`, server-initiated turns |
-| Resumable streaming | [Resumable streaming](https://developers.cloudflare.com/agents/api-reference/resumable-streaming/) | Stream recovery on disconnect |
-| Email | [Email](https://developers.cloudflare.com/agents/api-reference/email/) | Email routing, secure reply resolver |
-| MCP client | [MCP client](https://developers.cloudflare.com/agents/api-reference/mcp-client-api/) | Connecting to MCP servers |
-| MCP server | [MCP server](https://developers.cloudflare.com/agents/api-reference/mcp-agent-api/) | Building MCP servers with `McpAgent` |
-| MCP transports | [MCP transports](https://developers.cloudflare.com/agents/api-reference/mcp-transports/) | Streamable HTTP, SSE, RPC transport options |
-| Securing MCP servers | [Securing MCP](https://developers.cloudflare.com/agents/api-reference/securing-mcp-servers/) | OAuth, proxy MCP, hardening |
-| Human-in-the-loop | [Human-in-the-loop](https://developers.cloudflare.com/agents/concepts/human-in-the-loop/) | Approval flows, `needsApproval`, workflows |
-| Durable execution | [Durable execution](https://developers.cloudflare.com/agents/api-reference/durable-execution/) | `runFiber()`, `stash()`, surviving DO eviction |
-| Queue | [Queue](https://developers.cloudflare.com/agents/api-reference/queue-tasks/) | Built-in FIFO queue, `queue()` |
-| Retries | [Retries](https://developers.cloudflare.com/agents/api-reference/retries/) | `this.retry()`, backoff/jitter |
-| Observability | [Observability](https://developers.cloudflare.com/agents/api-reference/observability/) | Diagnostics-channel events |
-| Push notifications | [Push notifications](https://developers.cloudflare.com/agents/api-reference/push-notifications/) | Web Push + VAPID from agents |
-| Webhooks | [Webhooks](https://developers.cloudflare.com/agents/api-reference/webhooks/) | Receiving external webhooks |
-| Cross-domain auth | [Cross-domain auth](https://developers.cloudflare.com/agents/api-reference/cross-domain-authentication/) | WebSocket auth, tokens, CORS |
-| Readonly connections | [Readonly](https://developers.cloudflare.com/agents/api-reference/readonly-connections/) | `shouldConnectionBeReadonly` |
-| Voice | [Voice](https://developers.cloudflare.com/agents/api-reference/voice/) | Experimental STT/TTS, `withVoice` |
-| Browse the web | [Browser tools](https://developers.cloudflare.com/agents/api-reference/browse-the-web/) | Experimental CDP browser automation |
-| Think | [Think](https://developers.cloudflare.com/agents/api-reference/think/) | Experimental higher-level chat agent class |
-| Migrations | [AI SDK v5](https://developers.cloudflare.com/agents/guides/migration-to-ai-sdk-v5/), [AI SDK v6](https://developers.cloudflare.com/agents/guides/migration-to-ai-sdk-v6/) | Upgrading `@cloudflare/ai-chat` |
+| Concept | Description |
+|---------|-------------|
+| **Agent** | Long-running service with persistent state and scheduled tasks |
+| **State** | Database-backed state with auto-sync to clients |
+| **Callable** | RPC-style methods via HTTP or WebSocket |
+| **Workflow** | Durable multi-step background processing |
+| **Queue** | FIFO work queue with retries and backoff |
 
 ## Capabilities
 
-The Agents SDK provides:
+- **Persistent state** — Database-backed (SQLite, PostgreSQL, DynamoDB)
+- **Callable RPC** — Methods invoked over HTTP/WebSocket
+- **Scheduling** — One-time, recurring, and cron tasks
+- **Workflows** — Durable multi-step background processing
+- **Durable execution** — Work that survives process restarts
+- **Queue** — Built-in FIFO queue with retries
+- **MCP integration** — Connect to or build MCP servers
+- **Streaming chat** — Resumable streams, message persistence, tools
+- **Observability** — Structured logging and metrics
 
-- **Persistent state** — SQLite-backed, auto-synced to clients via `setState`
-- **Callable RPC** — `@callable()` methods invoked over WebSocket
-- **Scheduling** — One-time, recurring (`scheduleEvery`), and cron tasks
-- **Workflows** — Durable multi-step background processing via `AgentWorkflow`
-- **Durable execution** — `runFiber()` / `stash()` for work that survives DO eviction
-- **Queue** — Built-in FIFO queue with retries via `queue()`
-- **Retries** — `this.retry()` with exponential backoff and jitter
-- **MCP integration** — Connect to MCP servers or build your own with `McpAgent`
-- **Email handling** — Receive and reply to emails with secure routing
-- **Streaming chat** — `AIChatAgent` with resumable streams, message persistence, tools
-- **Server-driven messages** — `saveMessages`, `waitUntilStable` for proactive agent turns
-- **React hooks** — `useAgent`, `useAgentChat` for client apps
-- **Observability** — `diagnostics_channel` events for state, RPC, schedule, lifecycle
-- **Push notifications** — Web Push + VAPID delivery from agents
-- **Webhooks** — Receive and verify external webhooks
-- **Voice** (experimental) — STT/TTS via `@cloudflare/voice`
-- **Browser tools** (experimental) — CDP-powered browsing via `agents/browser`
-- **Think** (experimental) — Higher-level chat agent via `@cloudflare/think`
-
-## FIRST: Verify Installation
+## Installation
 
 ```bash
-npm ls agents  # Should show agents package
-```
-
-If not installed:
-```bash
-npm install agents
+pip install agents-sdk
 ```
 
 For chat agents:
 ```bash
-npm install agents @cloudflare/ai-chat ai @ai-sdk/react
+pip install agents-sdk[chat]
 ```
 
-## Wrangler Configuration
+## Project Structure
 
-```jsonc
-{
-  "compatibility_flags": ["nodejs_compat"],
-  "durable_objects": {
-    "bindings": [{ "name": "MyAgent", "class_name": "MyAgent" }]
-  },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MyAgent"] }]
-}
 ```
-
-**Gotchas:**
-- Do NOT enable `experimentalDecorators` in tsconfig (breaks `@callable`)
-- Never edit old migrations — always add new tags
-- Each agent class needs its own DO binding + migration entry
-- Add `"ai": { "binding": "AI" }` for Workers AI
+my-agent/
+├── src/
+│   └── agents/
+│       ├── __init__.py
+│       ├── counter.py
+│       ├── chat.py
+│       └── workflows.py
+├── tests/
+├── pyproject.toml
+└── README.md
+```
 
 ## Agent Class
 
-```typescript
-import { Agent, routeAgentRequest, callable } from "agents";
+```python
+from agents_sdk import Agent, callable, State
 
-type State = { count: number };
+class CounterState(State):
+    count: int = 0
 
-export class Counter extends Agent<Env, State> {
-  initialState = { count: 0 };
+class Counter(Agent[CounterState]):
+    def __init__(self):
+        super().__init__(initial_state=CounterState())
 
-  validateStateChange(nextState: State, source: Connection | "server") {
-    if (nextState.count < 0) throw new Error("Count cannot be negative");
-  }
+    def validate_state_change(self, next_state: CounterState, source: str):
+        if next_state.count < 0:
+            raise ValueError("Count cannot be negative")
 
-  onStateUpdate(state: State, source: Connection | "server") {
-    console.log("State updated:", state);
-  }
+    def on_state_update(self, state: CounterState, source: str):
+        print(f"State updated: {state}")
 
-  @callable()
-  increment() {
-    this.setState({ count: this.state.count + 1 });
-    return this.state.count;
-  }
-}
-
-export default {
-  fetch: (req, env) => routeAgentRequest(req, env) ?? new Response("Not found", { status: 404 })
-};
+    @callable()
+    def increment(self) -> int:
+        self.set_state(CounterState(count=self.state.count + 1))
+        return self.state.count
 ```
-
-## Routing
-
-Requests route to `/agents/{agent-name}/{instance-name}`:
-
-| Class | URL |
-|-------|-----|
-| `Counter` | `/agents/counter/user-123` |
-| `ChatRoom` | `/agents/chat-room/lobby` |
-
-Client: `useAgent({ agent: "Counter", name: "user-123" })`
-
-Custom routing: use `getAgentByName(env.MyAgent, "instance-id")` then `agent.fetch(request)`.
 
 ## Core APIs
 
 | Task | API |
 |------|-----|
-| Read state | `this.state.count` |
-| Write state | `this.setState({ count: 1 })` |
-| SQL query | `` this.sql`SELECT * FROM users WHERE id = ${id}` `` |
-| Schedule (delay) | `await this.schedule(60, "task", payload)` |
-| Schedule (cron) | `await this.schedule("0 * * * *", "task", payload)` |
-| Schedule (interval) | `await this.scheduleEvery(30, "poll")` |
-| RPC method | `@callable() myMethod() { ... }` |
-| Streaming RPC | `@callable({ streaming: true }) stream(res) { ... }` |
-| Start workflow | `await this.runWorkflow("ProcessingWorkflow", params)` |
-| Durable fiber | `await this.runFiber("name", async (ctx) => { ... })` |
-| Enqueue work | `this.queue("handler", payload)` |
-| Retry with backoff | `await this.retry(fn, { maxAttempts: 5 })` |
-| Broadcast to clients | `this.broadcast(message)` |
-| Get connections | `this.getConnections(tag?)` |
+| Read state | `self.state.count` |
+| Write state | `self.set_state(CounterState(count=1))` |
+| SQL query | `` self.sql("SELECT * FROM users WHERE id = ?", id) `` |
+| Schedule (delay) | `await self.schedule(60, "task", payload)` |
+| Schedule (cron) | `await self.schedule("0 * * * *", "task", payload)` |
+| Schedule (interval) | `await self.schedule_every(30, "poll")` |
+| RPC method | `@callable() def my_method(self) { ... }` |
+| Streaming RPC | `@callable(streaming=True) def stream(self, query) { ... }` |
+| Start workflow | `await self.run_workflow("ProcessingWorkflow", params)` |
+| Enqueue work | `self.queue("handler", payload)` |
+| Retry with backoff | `await self.retry(fn, max_attempts=5)` |
+| Broadcast to clients | `self.broadcast(message)` |
 
-## React Client
+## FastAPI Integration
 
-```tsx
-import { useAgent } from "agents/react";
+```python
+from fastapi import FastAPI
+from agents_sdk import AgentRouter
 
-function App() {
-  const [state, setLocalState] = useState({ count: 0 });
+app = FastAPI()
+router = AgentRouter()
 
-  const agent = useAgent({
-    agent: "Counter",
-    name: "my-instance",
-    onStateUpdate: (newState) => setLocalState(newState),
-    onIdentity: (name, agentType) => console.log(`Connected to ${name}`)
-  });
+@router.agent("counter")
+class Counter(Agent[CounterState]):
+    # ... agent implementation
+    pass
 
-  return (
-    <button onClick={() => agent.setState({ count: state.count + 1 })}>
-      Count: {state.count}
-    </button>
-  );
-}
+app.include_router(router)
 ```
+
+## Flask Integration
+
+```python
+from flask import Flask
+from agents_sdk import AgentManager
+
+app = Flask(__name__)
+manager = AgentManager(app)
+
+@manager.agent("counter")
+class Counter(Agent[CounterState]):
+    # ... agent implementation
+    pass
+```
+
+## Deployment Adapters
+
+The SDK includes adapters for popular platforms:
+
+| Provider | Adapter | Notes |
+|----------|---------|-------|
+| AWS Lambda | `agents_sdk.aws` | Uses DynamoDB for state |
+| Google Cloud Run | `agents_sdk.gcp` | Uses Firestore for state |
+| Azure Functions | `agents_sdk.azure` | Uses Cosmos DB for state |
+| Railway | `agents_sdk.railway` | Uses PostgreSQL |
+| Fly.io | `agents_sdk.fly` | Uses SQLite or PostgreSQL |
+| Self-hosted | `agents_sdk.server` | SQLite, PostgreSQL, etc. |
 
 ## References
 
 ### Core
 - **[references/state-scheduling.md](references/state-scheduling.md)** — State persistence, scheduling, SQL
 - **[references/callable.md](references/callable.md)** — RPC methods, streaming, timeouts
-- **[references/routing.md](references/routing.md)** — URL patterns, custom routing, `getAgentByName`
-- **[references/configuration.md](references/configuration.md)** — Wrangler config, bindings, Vite setup
+- **[references/configuration.md](references/configuration.md)** — Config, bindings, setup
 
 ### Chat & Streaming
-- **[references/streaming-chat.md](references/streaming-chat.md)** — AIChatAgent, resumable streams, tools
-- **[references/client-sdk.md](references/client-sdk.md)** — `useAgent`, `useAgentChat`, `AgentClient`
-- **[references/server-driven-messages.md](references/server-driven-messages.md)** — Trigger patterns, `saveMessages`
-- **[references/human-in-the-loop.md](references/human-in-the-loop.md)** — Approval flows, `needsApproval`
+- **[references/streaming-chat.md](references/streaming-chat.md)** — ChatAgent, resumable streams, tools
+- **[references/client-sdk.md](references/client-sdk.md)** — Client integration
 
 ### Background Processing
-- **[references/workflows.md](references/workflows.md)** — Durable Workflows integration
-- **[references/durable-execution.md](references/durable-execution.md)** — `runFiber`, `stash`, surviving eviction
+- **[references/workflows.md](references/workflows.md)** — Durable Workflows
+- **[references/durable-execution.md](references/durable-execution.md)** — `run_fiber`, `stash`, surviving restarts
 - **[references/queue-retries.md](references/queue-retries.md)** — Built-in queue, retry with backoff
 
 ### Integrations
-- **[references/mcp.md](references/mcp.md)** — MCP client and server, transports, securing
+- **[references/mcp.md](references/mcp.md)** — MCP client and server, transports
 - **[references/email.md](references/email.md)** — Email routing and handling
 - **[references/webhooks-push.md](references/webhooks-push.md)** — Webhooks, push notifications
-- **[references/observability.md](references/observability.md)** — Diagnostics-channel events
-
-### Experimental
-- **[references/think.md](references/think.md)** — `@cloudflare/think` higher-level chat agent
-- **[references/voice.md](references/voice.md)** — `@cloudflare/voice` STT/TTS
-- **[references/codemode.md](references/codemode.md)** — Code Mode for tool orchestration
-- **[references/browse-the-web.md](references/browse-the-web.md)** — CDP browser tools
+- **[references/observability.md](references/observability.md)** — Logging, metrics, tracing

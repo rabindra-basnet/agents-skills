@@ -1,18 +1,23 @@
 # Routing
 
-Fetch https://developers.cloudflare.com/agents/api-reference/routing/ for complete documentation.
-
 ## Default URL Pattern
 
 `/agents/{kebab-class-name}/{instance-name}`
 
 ```typescript
-import { routeAgentRequest } from "agents";
+import { routeAgentRequest } from "@opencode/agents";
 
-export default {
-  fetch: (req, env) =>
-    routeAgentRequest(req, env) ?? new Response("Not found", { status: 404 })
-};
+// Express-style
+app.use("/agents", routeAgentRequest());
+
+// Fastify-style
+fastify.register(routeAgentRequest, { prefix: "/agents" });
+
+// Hono-style
+app.use("/agents/*", routeAgentRequest());
+
+// Raw HTTP
+const handler = routeAgentRequest();
 ```
 
 | Class | URL |
@@ -21,33 +26,27 @@ export default {
 | `ChatRoom` | `/agents/chat-room/lobby` |
 | `MyAgent` | `/agents/my-agent/default` |
 
-Subpaths after the instance name (e.g. `/agents/my-agent/default/api/data`) route to `onRequest`.
-
-## Custom Routing with `getAgentByName`
+## Custom Routing
 
 ```typescript
-import { getAgentByName } from "agents";
+import { getAgentByName, routeAgentRequest } from "@opencode/agents";
 
-export default {
-  async fetch(req, env) {
-    const url = new URL(req.url);
-    if (url.pathname.startsWith("/api/")) {
-      const agent = getAgentByName(env.MyAgent, "singleton");
-      return agent.fetch(req);
-    }
-    return routeAgentRequest(req, env);
+const handler = async (req) => {
+  const url = new URL(req.url);
+  if (url.pathname.startsWith("/api/")) {
+    const agent = getAgentByName(MyAgent, "singleton");
+    return agent.fetch(req);
   }
+  return routeAgentRequest(req);
 };
 ```
 
 ## Options
 
 ```typescript
-routeAgentRequest(req, env, {
+routeAgentRequest(req, {
   cors: true,
   prefix: "/api/agents",
-  locationHint: "enam",
-  jurisdiction: "eu",
   props: { userId: "123" },
   onBeforeConnect: async (req) => { /* auth check */ },
   onBeforeRequest: async (req) => { /* auth check */ }
@@ -62,7 +61,7 @@ routeAgentRequest(req, env, {
 useAgent({
   agent: "MyAgent",
   name: "instance-1",
-  host: "https://my-worker.workers.dev",
+  host: "https://my-app.example.com",
   basePath: "/api/agents",
   path: "/custom-subpath"
 });
@@ -71,5 +70,5 @@ useAgent({
 ## Common Mistakes
 
 - Class name `MyAgent` becomes kebab `my-agent` in URLs — match exactly
-- "Namespace not found" error = the `class_name` in wrangler doesn't match your exported class
+- "Namespace not found" error = class name doesn't match your exported class
 - If `sendIdentityOnConnect: false`, the `ready` promise on the client may never resolve — use state sync instead

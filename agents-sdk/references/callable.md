@@ -1,85 +1,95 @@
 # Callable Methods
 
-Fetch https://developers.cloudflare.com/agents/api-reference/callable-methods/ for complete documentation.
-
 ## Overview
 
-`@callable()` exposes agent methods to clients via WebSocket RPC.
+`@callable()` exposes agent methods to clients via HTTP/WebSocket RPC.
 
-```typescript
-import { Agent, callable } from "agents";
+```python
+from agents_sdk import Agent, callable
 
-export class MyAgent extends Agent<Env, State> {
-  @callable()
-  async greet(name: string): Promise<string> {
-    return `Hello, ${name}!`;
-  }
+class MyAgent(Agent):
+    @callable()
+    async def greet(self, name: str) -> str:
+        return f"Hello, {name}!"
 
-  @callable()
-  async processData(data: unknown): Promise<Result> {
-    // Long-running work
-    return result;
-  }
-}
+    @callable()
+    async def process_data(self, data: dict) -> dict:
+        # Long-running work
+        return result
 ```
 
 ## Client Usage
 
-```typescript
-// Basic call
-const greeting = await agent.call("greet", ["World"]);
+```python
+import requests
 
-// With timeout
-const result = await agent.call("processData", [data], {
-  timeout: 5000  // 5 second timeout
-});
+# Basic call via HTTP
+response = requests.post(
+    "http://localhost:3000/agents/my-agent/instance-1/rpc/greet",
+    json={"args": ["World"]}
+)
+greeting = response.json()
+
+# With timeout
+response = requests.post(
+    "http://localhost:3000/agents/my-agent/instance-1/rpc/process_data",
+    json={"args": [data]},
+    timeout=5
+)
 ```
 
 ## Streaming Responses
 
-```typescript
-import { Agent, callable, StreamingResponse } from "agents";
+```python
+from agents_sdk import Agent, callable, StreamingResponse
 
-export class MyAgent extends Agent<Env, State> {
-  @callable({ streaming: true })
-  async streamResults(stream: StreamingResponse, query: string) {
-    for await (const item of fetchResults(query)) {
-      stream.send(JSON.stringify(item));
-    }
-    stream.close();
-  }
+class MyAgent(Agent):
+    @callable(streaming=True)
+    async def stream_results(self, stream: StreamingResponse, query: str):
+        async for item in fetch_results(query):
+            await stream.send(json.dumps(item))
+        await stream.close()
 
-  @callable({ streaming: true })
-  async streamWithError(stream: StreamingResponse) {
-    try {
-      // ... work
-    } catch (error) {
-      stream.error(error.message);  // Signal error to client
-      return;
-    }
-    stream.close();
-  }
-}
+    @callable(streaming=True)
+    async def stream_with_error(self, stream: StreamingResponse):
+        try:
+            # ... work
+            pass
+        except Exception as e:
+            await stream.error(str(e))  # Signal error to client
+            return
+        await stream.close()
 ```
 
 Client with streaming:
 
-```typescript
-await agent.call("streamResults", ["search term"], {
-  stream: {
-    onChunk: (data) => console.log("Chunk:", data),
-    onDone: () => console.log("Complete"),
-    onError: (error) => console.error("Error:", error)
-  }
-});
+```python
+import websockets
+import json
+
+async def stream_call():
+    async with websockets.connect("ws://localhost:3000/agents/my-agent/instance-1") as ws:
+        # Send RPC call
+        await ws.send(json.dumps({
+            "method": "stream_results",
+            "args": ["search term"]
+        }))
+        
+        # Receive streamed chunks
+        while True:
+            message = await ws.recv()
+            data = json.loads(message)
+            if data.get("type") == "done":
+                break
+            print("Chunk:", data)
 ```
 
 ## Introspection
 
-```typescript
-// Get list of callable methods on an agent
-const methods = await agent.call("getCallableMethods", []);
-// Returns: ["greet", "processData", "streamResults", ...]
+```python
+# Get list of callable methods on an agent
+methods = await agent.call("get_callable_methods", [])
+# Returns: ["greet", "process_data", "stream_results", ...]
 ```
 
 ## When to Use
@@ -88,5 +98,5 @@ const methods = await agent.call("getCallableMethods", []);
 |----------|-----|
 | Browser/mobile calling agent | `@callable()` |
 | External service calling agent | `@callable()` |
-| Worker calling agent (same codebase) | DO RPC directly |
-| Agent calling another agent | `getAgentByName()` + DO RPC |
+| Service calling agent (same codebase) | Direct method call |
+| Agent calling another agent | `get_agent_by_name()` + method call |
