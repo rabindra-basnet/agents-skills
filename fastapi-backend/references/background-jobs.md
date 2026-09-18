@@ -107,7 +107,108 @@ class WorkerSettings:
 Run it with `uv run arq app.workers.arq_worker.WorkerSettings` as its own process/container
 (never inside the API's `uvicorn` process) — see `deployment.md` for docker-compose wiring.
 
-## Persisting job execution history to the database
+### Job functions with automatic logging
+
+```python
+# app/workers/jobs/send_email.py
+from app.workers.jobs.registry import register_job
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+@register_job
+async def send_email(ctx: dict, *, to: str, template: str, subject: str, context: dict | None = None) -> dict:
+    """Send an email via external provider."""
+    logger.info(
+        "Job started: send_email",
+        extra={"to": to, "template": template, "job_id": ctx.get("job_id")},
+    )
+    
+    try:
+        http: httpx.AsyncClient = ctx["http"]
+        resp = await http.post(
+            "https://api.emailprovider.com/send",
+            json={"to": to, "template": template, "subject": subject, "context": context or {}},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        
+        logger.info(
+            "Job completed: send_email",
+            extra={"to": to, "template": template, "status": "success"},
+        )
+        return {"sent": True, "to": to}
+    
+    except Exception as e:
+        logger.error(
+            "Job failed: send_email",
+            extra={"to": to, "template": template, "error": str(e)},
+            exc_info=True,
+        )
+        raise
+```
+
+### Worker with automatic logging hooks
+
+```python
+# app/workers/arq_worker.py
+from arq import cron
+from arq.connections import RedisSettings
+from app.core.config import settings
+from app.core.logging import get_logger
+from app.workers.jobs.send_email import send_email
+from app.workers.jobs.nightly_report import nightly_report
+from app.workers.history import record_job_start, record_job_result
+
+logger = get_logger(__name__)
+
+async def startup(ctx: dict) -> None:
+    ctx["db_engine"] = engine
+    ctx["http"] = httpx.AsyncClient()
+    logger.info("Worker started")
+
+async def shutdown(ctx: dict) -> None:
+    await ctx["http"].aclose()
+    await ctx["db_engine"].dispose()
+    logger.info("Worker shutdown")
+
+async def on_job_start(ctx: dict) -> None:
+    logger.info(
+        "Job started",
+        extra={
+            "job_id": ctx.get("job_id"),
+            "job_name": ctx.get("job_name"),
+            "job_try": ctx.get("job_try"),
+        }
+    )
+    await record_job_start(ctx)
+
+async def after_job_end(ctx: dict) -> None:
+    status = "failed" if ctx.get("job_result_failed") else "success"
+    logger.info(
+        "Job finished",
+        extra={
+            "job_id": ctx.get("job_id"),
+            "job_name": ctx.get("job_name"),
+            "status": status,
+        }
+    )
+    await record_job_result(ctx)
+
+class WorkerSettings:
+    redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    functions = [send_email, nightly_report]
+    cron_jobs = [
+        cron(nightly_report, hour=2, minute=0, run_at_startup=False),
+    ]
+    on_startup = startup
+    on_shutdown = shutdown
+    on_job_start = on_job_start
+    after_job_end = after_job_end
+    max_jobs = 20
+    job_timeout = 300
+    max_tries = 3
+```
 
 arq stores results in Redis, but Redis results expire and aren't queryable/joinable the way a
 table is — anything you want to audit, alert on, or show in an admin view needs its own
@@ -159,24 +260,135 @@ async def record_job_result(ctx: dict) -> None:
 
 ## Enqueuing from the API
 
+Inspired by Frappe's `enqueue` pattern — accept both function references and string names,
+with queue selection, timeouts, callbacks, and automatic logging.
+
 ```python
 # app/workers/enqueue.py
+from typing import Callable, Any
 from app.core.redis import get_arq_redis
+from app.core.logging import get_logger
 
-async def enqueue_job(job: str, **kwargs) -> None:
-    """Enqueue a background job."""
+logger = get_logger(__name__)
+
+async def enqueue_job(
+    method: str | Callable,
+    *,
+    queue: str = "default",
+    timeout: int | None = None,
+    on_success: Callable | None = None,
+    on_failure: Callable | None = None,
+    at_front: bool = False,
+    job_id: str | None = None,
+    deduplicate: bool = False,
+    **kwargs,
+) -> str | None:
+    """
+    Enqueue a background job.
+
+    Args:
+        method: Function or dotted path string (e.g. "app.workers.jobs.send_email")
+        queue: Queue name (short, default, long)
+        timeout: Job timeout in seconds (defaults to queue timeout)
+        on_success: Success callback
+        on_failure: Failure callback
+        at_front: Enqueue at front of queue
+        job_id: Unique job ID for deduplication
+        deduplicate: Don't re-queue if already queued
+        **kwargs: Arguments passed to the job function
+
+    Returns:
+        Job ID or None
+    """
     redis = await get_arq_redis()
-    await redis.enqueue_job(job, **kwargs)
+
+    # Resolve function name
+    if callable(method):
+        job_name = f"{method.__module__}.{method.__qualname__}"
+    else:
+        job_name = method
+
+    # Deduplication check
+    if deduplicate:
+        if not job_id:
+            raise ValueError("job_id is required for deduplication")
+        existing = await redis.get(f"arq:job:{job_id}")
+        if existing:
+            logger.info(f"Job {job_id} already queued, skipping")
+            return job_id
+
+    # Log enqueue
+    logger.info(
+        "Enqueueing job",
+        extra={
+            "job_name": job_name,
+            "queue": queue,
+            "timeout": timeout,
+            "kwargs": kwargs,
+        }
+    )
+
+    # Enqueue to arq
+    result = await redis.enqueue_job(
+        job_name,
+        _queue_name=queue,
+        _job_id=job_id,
+        **kwargs,
+    )
+
+    return result
 ```
 
+### Usage examples
+
 ```python
-# API service
+# Pass function directly
+from app.workers.jobs.send_email import send_email
+
+await enqueue_job(send_email, to="user@example.com", template="welcome")
+
+# Pass string path
+await enqueue_job("app.workers.jobs.send_email", to="user@example.com", template="welcome")
+
+# With queue selection
+await enqueue_job("app.workers.jobs.nightly_report", queue="long", timeout=3600)
+
+# With deduplication
+await enqueue_job(
+    "app.workers.jobs.sync_data",
+    job_id="sync-daily",
+    deduplicate=True,
+    source="api",
+)
+
+# With callbacks
+await enqueue_job(
+    "app.workers.jobs.process_payment",
+    on_success=payment_success_handler,
+    on_failure=payment_failure_handler,
+    amount=100,
+    user_id="user-123",
+)
+```
+
+### API service usage
+
+```python
+# app/features/auth/service.py
 from app.workers.enqueue import enqueue_job
 
 class AuthService:
     async def register(self, data: UserCreate) -> User:
         user = await self._repo.create(data)
-        await enqueue_job("send_email", to=user.email, template="welcome", subject="Welcome!")
+        
+        # Enqueue email job
+        await enqueue_job(
+            "app.workers.jobs.send_email",
+            to=user.email,
+            template="welcome",
+            subject="Welcome!",
+        )
+        
         return user
 ```
 
