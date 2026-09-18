@@ -404,6 +404,119 @@ await enqueue_job(
 )
 ```
 
+## Logging configuration
+
+### Local logs with TimedRotatingFileHandler
+
+```python
+# app/core/logging.py
+import logging
+import sys
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+from app.core.config import settings
+
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+def get_logger(name: str) -> logging.Logger:
+    """Get a logger with both console and file handlers."""
+    logger = logging.getLogger(name)
+    
+    if logger.handlers:
+        return logger
+    
+    logger.setLevel(logging.INFO)
+    
+    # Console handler (JSON in prod, human-readable in dev)
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(logging.INFO)
+    
+    # File handler — rotate daily, keep 30 days
+    file_handler = TimedRotatingFileHandler(
+        filename=LOG_DIR / "app.log",
+        when="midnight",
+        interval=1,
+        backupCount=30,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.INFO)
+    
+    # Formatter
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    console.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+    
+    logger.addHandler(console)
+    logger.addHandler(file_handler)
+    
+    return logger
+```
+
+### Worker logs (separate file)
+
+```python
+# app/workers/logging.py
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+def get_worker_logger(name: str) -> logging.Logger:
+    """Get a logger for worker processes."""
+    logger = logging.getLogger(f"worker.{name}")
+    
+    if logger.handlers:
+        return logger
+    
+    logger.setLevel(logging.INFO)
+    
+    # Worker-specific log file
+    file_handler = TimedRotatingFileHandler(
+        filename=LOG_DIR / "worker.log",
+        when="midnight",
+        interval=1,
+        backupCount=30,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.INFO)
+    
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    return logger
+```
+
+### Usage in jobs
+
+```python
+# app/workers/jobs/send_email.py
+from app.workers.logging import get_worker_logger
+
+logger = get_worker_logger(__name__)
+
+async def send_email(ctx: dict, *, to: str, template: str) -> dict:
+    logger.info("Sending email", extra={"to": to, "template": template})
+    # ...
+    logger.info("Email sent", extra={"to": to, "template": template})
+```
+
+### Log rotation schedule
+
+| File | Rotation | Retention | Purpose |
+|------|----------|-----------|---------|
+| `logs/app.log` | Daily | 30 days | API requests, app events |
+| `logs/worker.log` | Daily | 30 days | Background job execution |
+| `logs/error.log` | Daily | 90 days | Errors only (longer retention) |
+
 Never do the actual work inline in the request/response cycle if it involves external I/O
 (email providers, LLM calls, file processing) — enqueue and return immediately; let the worker
 own retries/backoff via arq's `max_tries`/`retry_delay`.
