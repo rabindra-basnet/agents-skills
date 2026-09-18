@@ -72,13 +72,17 @@ def setup_logging(log_level: str = "INFO", json_output: bool = False) -> None:
 
     formatter = JSONFormatter() if json_output else TextFormatter()
 
-    # Console
+    # Console — app code only, suppress noisy libraries
     console = logging.StreamHandler(sys.stdout)
     console.setLevel(logging.INFO)
     console.setFormatter(formatter)
+    console.addFilter(lambda record: not record.name.startswith((
+        "uvicorn", "httpx", "httpcore", "sqlalchemy", "alembic",
+        "multipart", "uvicorn.access",
+    )))
     root.addHandler(console)
 
-    # App log — daily rotation, 30 days
+    # App log — everything goes here (app + third-party)
     app_handler = logging.handlers.TimedRotatingFileHandler(
         filename=LOG_DIR / "app.log",
         when="midnight",
@@ -86,11 +90,11 @@ def setup_logging(log_level: str = "INFO", json_output: bool = False) -> None:
         backupCount=30,
         encoding="utf-8",
     )
-    app_handler.setLevel(logging.INFO)
+    app_handler.setLevel(logging.DEBUG)
     app_handler.setFormatter(formatter)
     root.addHandler(app_handler)
 
-    # Error log — daily rotation, 90 days
+    # Error log — only errors and above
     error_handler = logging.handlers.TimedRotatingFileHandler(
         filename=LOG_DIR / "error.log",
         when="midnight",
@@ -101,6 +105,10 @@ def setup_logging(log_level: str = "INFO", json_output: bool = False) -> None:
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(formatter)
     root.addHandler(error_handler)
+
+    # Quiet down noisy third-party loggers (still go to files, just less verbose)
+    for noisy in ("uvicorn", "httpx", "httpcore", "sqlalchemy.engine", "multipart"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:
