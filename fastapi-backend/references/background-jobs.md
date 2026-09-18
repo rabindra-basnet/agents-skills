@@ -299,6 +299,7 @@ logger = get_logger(__name__)
 
 async def enqueue_job(
     method: str | Callable,
+    *,
     queue: str = "default",
     timeout: int | None = None,
     on_success: Callable | None = None,
@@ -364,7 +365,7 @@ async def enqueue_job(
     return await redis.enqueue_job(job_name, **enqueue_kwargs, **kwargs)
 ```
 
-### Usage (Frappe-style)
+### Usage
 
 ```python
 # app/features/auth/service.py
@@ -374,10 +375,9 @@ class AuthService:
     async def register(self, data: UserCreate) -> User:
         user = await self._repo.create(data)
         
-        # Frappe-style: method, queue, then kwargs
         await enqueue_job(
             "app.workers.jobs.send_email",
-            "short",
+            queue="short",
             to=user.email,
             template="welcome",
             subject="Welcome!",
@@ -388,15 +388,15 @@ class AuthService:
 
 ```python
 # With timeout
-await enqueue_job("nightly_report", "long", timeout=7200)
+await enqueue_job("nightly_report", queue="long", timeout=7200)
 
 # With deduplication
-await enqueue_job("sync_data", "short", job_id="sync-daily", deduplicate=True)
+await enqueue_job("sync_data", queue="short", job_id="sync-daily", deduplicate=True)
 
 # With callbacks
 await enqueue_job(
     "process_payment",
-    "long",
+    queue="long",
     on_success=payment_success_handler,
     on_failure=payment_failure_handler,
     amount=100,
