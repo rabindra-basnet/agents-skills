@@ -291,14 +291,13 @@ class WorkerSettings:
 from typing import Callable
 from app.core.redis import get_arq_redis
 from app.core.logging import get_logger
-from app.workers.jobs import JOB_QUEUES
 
 logger = get_logger(__name__)
 
 async def enqueue_job(
     method: str | Callable,
     *,
-    queue: str | None = None,
+    queue: str = "default",
     timeout: int | None = None,
     on_success: Callable | None = None,
     on_failure: Callable | None = None,
@@ -312,7 +311,7 @@ async def enqueue_job(
 
     Args:
         method: Job function or dotted path string
-        queue: Queue override (short/default/long). If None, uses JOB_QUEUES mapping.
+        queue: Queue name (short/default/long)
         timeout: Job timeout in seconds (overrides queue default)
         on_success: Success callback function
         on_failure: Failure callback function
@@ -331,9 +330,6 @@ async def enqueue_job(
         job_name = f"{method.__module__}.{method.__qualname__}"
     else:
         job_name = method
-
-    # Use provided queue or fall back to job's default
-    queue = queue or JOB_QUEUES.get(method, "default")
 
     # Deduplication check
     if deduplicate:
@@ -378,6 +374,7 @@ class AuthService:
         
         await enqueue_job(
             "app.workers.jobs.send_email",
+            queue="short",
             to=user.email,
             template="welcome",
             subject="Welcome!",
@@ -391,10 +388,10 @@ class AuthService:
 await enqueue_job("send_email", queue="long", to="user@example.com")
 
 # Override timeout
-await enqueue_job("nightly_report", timeout=7200)
+await enqueue_job("nightly_report", queue="long", timeout=7200)
 
 # Deduplication
-await enqueue_job("sync_data", job_id="sync-daily", deduplicate=True)
+await enqueue_job("sync_data", queue="short", job_id="sync-daily", deduplicate=True)
 ```
 
 Never do the actual work inline in the request/response cycle if it involves external I/O
@@ -422,7 +419,7 @@ QUEUES = {
 }
 ```
 
-### Job registry with queue assignment
+### Job registry
 
 ```python
 # app/workers/jobs/__init__.py
@@ -432,149 +429,7 @@ from app.workers.jobs.process_webhook import process_webhook
 from app.workers.jobs.cleanup_expired import cleanup_expired
 from app.workers.history import cleanup_scheduler_log
 
-# Map jobs to queues
-JOB_QUEUES = {
-    send_email: "short",
-    process_webhook: "short",
-    nightly_report: "long",
-    cleanup_expired: "long",
-    cleanup_scheduler_log: "long",
-}
-
-ALL_JOBS = list(JOB_QUEUES.keys())
-```
-
-### Single worker with queue filtering
-
-```python
-# app/workers/arq_worker.py
-from arq import cron
-from arq.connections import RedisSettings
-from app.core.config import settings
-from app.workers.queues import QUEUES
-from app.workers.jobs import JOB_QUEUES
-from app.workers.history import record_job_start, record_job_result
-
-def create_worker_settings(queue_name: str):
-    """Create worker settings for a specific queue."""
-    queue = QUEUES[queue_name]
-    jobs = [job for job, q in JOB_QUEUES.items() if q == queue_name]
-    
-    class WorkerSettings:
-        redis_settings = RedisSettings.from_dsn(settings.redis_url)
-        functions = jobs
-        queue_name = queue_name
-        max_jobs = queue.max_jobs
-        job_timeout = queue.timeout
-        on_job_start = record_job_start
-        after_job_end = record_job_result
-    
-    return WorkerSettings
-
-ShortWorker = create_worker_settings("short")
-DefaultWorker = create_worker_settings("default")
-LongWorker = create_worker_settings("long")
-```
-
-### Enqueue with queue selection
-
-```python
-# app/workers/enqueue.py
-from typing import Callable
-from app.core.redis import get_arq_redis
-from app.core.logging import get_logger
-from app.workers.jobs import JOB_QUEUES
-
-logger = get_logger(__name__)
-
-async def enqueue_job(
-    method: str | Callable,
-    *,
-    queue: str | None = None,
-    timeout: int | None = None,
-    on_success: Callable | None = None,
-    on_failure: Callable | None = None,
-    at_front: bool = False,
-    job_id: str | None = None,
-    deduplicate: bool = False,
-    **kwargs,
-) -> str | None:
-    """
-    Enqueue a background job.
-
-    Args:
-        method: Job function or dotted path string
-        queue: Queue override (short/default/long). If None, uses JOB_QUEUES mapping.
-        timeout: Job timeout in seconds (overrides queue default)
-        on_success: Success callback function
-        on_failure: Failure callback function
-        at_front: Enqueue at front of queue
-        job_id: Unique job ID for deduplication
-        deduplicate: Don't re-queue if already queued
-        **kwargs: Arguments passed to the job function
-
-    Returns:
-        Job ID or None
-    """
-    redis = await get_arq_redis()
-
-    # Resolve function name
-    if callable(method):
-        job_name = f"{method.__module__}.{method.__qualname__}"
-    else:
-        job_name = method
-
-    # Use provided queue or fall back to job's default
-    queue = queue or JOB_QUEUES.get(method, "default")
-
-    # Deduplication check
-    if deduplicate:
-        if not job_id:
-            raise ValueError("job_id is required for deduplication")
-        existing = await redis.get(f"arq:job:{job_id}")
-        if existing:
-            logger.info(f"Job {job_id} already queued, skipping")
-            return job_id
-
-    # Log enqueue
-    logger.info(
-        "Enqueueing job",
-        extra={
-            "job_name": job_name,
-            "queue": queue,
-            "timeout": timeout,
-            "kwargs": kwargs,
-        }
-    )
-
-    # Build enqueue kwargs
-    enqueue_kwargs = {"_queue_name": queue}
-    if timeout:
-        enqueue_kwargs["_job_timeout"] = timeout
-    if job_id:
-        enqueue_kwargs["_job_id"] = job_id
-
-    # Enqueue to arq
-    return await redis.enqueue_job(job_name, **enqueue_kwargs, **kwargs)
-```
-
-```python
-# API service
-from app.workers.enqueue import enqueue_job
-
-# Auto-select queue from JOB_QUEUES mapping
-await enqueue_job("send_email", to="user@example.com")  # → "short" queue
-await enqueue_job("nightly_report")  # → "long" queue
-
-# Override queue
-await enqueue_job("send_email", queue="long", to="user@example.com")  # → "long" queue
-
-# Override timeout
-await enqueue_job("nightly_report", timeout=7200)  # 2 hours timeout
-await enqueue_job("send_email", timeout=10)  # 10 seconds timeout
-
-# Queue + timeout override
-await enqueue_job("nightly_report", queue="short", timeout=60)  # → "short" queue, 60s timeout
+ALL_JOBS = [send_email, nightly_report, process_webhook, cleanup_expired, cleanup_scheduler_log]
 ```
 
 ### Single worker (all queues)
@@ -589,19 +444,19 @@ from app.workers.history import record_job_start, record_job_result
 
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    functions = ALL_JOBS  # Process all queues
+    functions = ALL_JOBS
     cron_jobs = [
         cron(nightly_report, hour=2, minute=0, run_at_startup=False),
+        cron(cleanup_scheduler_log, day="last", hour=3, minute=0, run_at_startup=False),
     ]
     on_job_start = record_job_start
     after_job_end = record_job_result
     max_jobs = 20
-    job_timeout = 3600  # Max timeout across all queues
+    job_timeout = 3600
     max_tries = 3
 ```
 
 ```bash
-# Single worker processes all queues
 uv run arq app.workers.arq_worker.WorkerSettings
 ```
 
@@ -610,15 +465,13 @@ uv run arq app.workers.arq_worker.WorkerSettings
 ```python
 # app/workers/arq_worker.py
 from app.workers.queues import QUEUES
-from app.workers.jobs import JOB_QUEUES
 
 def create_worker_settings(queue_name: str):
     queue = QUEUES[queue_name]
-    jobs = [job for job, q in JOB_QUEUES.items() if q == queue_name]
     
     class WorkerSettings:
         redis_settings = RedisSettings.from_dsn(settings.redis_url)
-        functions = jobs
+        functions = ALL_JOBS
         queue_name = queue_name
         max_jobs = queue.max_jobs
         job_timeout = queue.timeout
@@ -629,12 +482,6 @@ def create_worker_settings(queue_name: str):
 
 ShortWorker = create_worker_settings("short")
 LongWorker = create_worker_settings("long")
-```
-
-```bash
-# Separate workers per queue
-uv run arq app.workers.arq_worker.ShortWorker &
-uv run arq app.workers.arq_worker.LongWorker &
 ```
 
 ### Docker compose
