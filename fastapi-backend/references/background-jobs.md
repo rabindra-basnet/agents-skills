@@ -473,23 +473,82 @@ LongWorker = create_worker_settings("long")
 
 ```python
 # app/workers/enqueue.py
+from typing import Callable
 from app.core.redis import get_arq_redis
+from app.core.logging import get_logger
 from app.workers.jobs import JOB_QUEUES
 
-async def enqueue_job(method: str, *, queue: str | None = None, **kwargs):
+logger = get_logger(__name__)
+
+async def enqueue_job(
+    method: str | Callable,
+    *,
+    queue: str | None = None,
+    timeout: int | None = None,
+    on_success: Callable | None = None,
+    on_failure: Callable | None = None,
+    at_front: bool = False,
+    job_id: str | None = None,
+    deduplicate: bool = False,
+    **kwargs,
+) -> str | None:
     """
-    Enqueue job with optional queue override.
-    
+    Enqueue a background job.
+
     Args:
-        method: Job function name (string path)
+        method: Job function or dotted path string
         queue: Queue override (short/default/long). If None, uses JOB_QUEUES mapping.
+        timeout: Job timeout in seconds (overrides queue default)
+        on_success: Success callback function
+        on_failure: Failure callback function
+        at_front: Enqueue at front of queue
+        job_id: Unique job ID for deduplication
+        deduplicate: Don't re-queue if already queued
         **kwargs: Arguments passed to the job function
+
+    Returns:
+        Job ID or None
     """
+    redis = await get_arq_redis()
+
+    # Resolve function name
+    if callable(method):
+        job_name = f"{method.__module__}.{method.__qualname__}"
+    else:
+        job_name = method
+
     # Use provided queue or fall back to job's default
     queue = queue or JOB_QUEUES.get(method, "default")
-    
-    redis = await get_arq_redis()
-    return await redis.enqueue_job(method, _queue_name=queue, **kwargs)
+
+    # Deduplication check
+    if deduplicate:
+        if not job_id:
+            raise ValueError("job_id is required for deduplication")
+        existing = await redis.get(f"arq:job:{job_id}")
+        if existing:
+            logger.info(f"Job {job_id} already queued, skipping")
+            return job_id
+
+    # Log enqueue
+    logger.info(
+        "Enqueueing job",
+        extra={
+            "job_name": job_name,
+            "queue": queue,
+            "timeout": timeout,
+            "kwargs": kwargs,
+        }
+    )
+
+    # Build enqueue kwargs
+    enqueue_kwargs = {"_queue_name": queue}
+    if timeout:
+        enqueue_kwargs["_job_timeout"] = timeout
+    if job_id:
+        enqueue_kwargs["_job_id"] = job_id
+
+    # Enqueue to arq
+    return await redis.enqueue_job(job_name, **enqueue_kwargs, **kwargs)
 ```
 
 ```python
@@ -500,9 +559,15 @@ from app.workers.enqueue import enqueue_job
 await enqueue_job("send_email", to="user@example.com")  # → "short" queue
 await enqueue_job("nightly_report")  # → "long" queue
 
-# Override queue explicitly
+# Override queue
 await enqueue_job("send_email", queue="long", to="user@example.com")  # → "long" queue
-await enqueue_job("nightly_report", queue="short")  # → "short" queue
+
+# Override timeout
+await enqueue_job("nightly_report", timeout=7200)  # 2 hours timeout
+await enqueue_job("send_email", timeout=10)  # 10 seconds timeout
+
+# Queue + timeout override
+await enqueue_job("nightly_report", queue="short", timeout=60)  # → "short" queue, 60s timeout
 ```
 
 ### Single worker (all queues)
