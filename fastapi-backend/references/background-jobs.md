@@ -160,9 +160,35 @@ async def record_job_result(ctx: dict) -> None:
 ## Enqueuing from the API
 
 ```python
-# inside a service.py
-redis = await get_arq_redis(app.state)
-await redis.enqueue_job("send_email", to=user.email, template="welcome")
+# app/workers/enqueue.py
+from app.core.redis import get_arq_redis
+
+async def enqueue_send_email(*, to: str, template: str, subject: str, context: dict | None = None):
+    redis = await get_arq_redis()
+    await redis.enqueue_job("send_email", to=to, template=template, subject=subject, context=context)
+
+async def enqueue_nightly_report():
+    redis = await get_arq_redis()
+    await redis.enqueue_job("nightly_report")
+
+async def enqueue_process_webhook(*, event_type: str, payload: dict):
+    redis = await get_arq_redis()
+    await redis.enqueue_job("process_webhook", event_type=event_type, payload=payload)
+
+async def enqueue_cleanup_expired():
+    redis = await get_arq_redis()
+    await redis.enqueue_job("cleanup_expired")
+```
+
+```python
+# API service
+from app.workers.enqueue import enqueue_send_email
+
+class AuthService:
+    async def register(self, data: UserCreate) -> User:
+        user = await self._repo.create(data)
+        await enqueue_send_email(to=user.email, template="welcome", subject="Welcome!")
+        return user
 ```
 
 Never do the actual work inline in the request/response cycle if it involves external I/O
