@@ -246,6 +246,32 @@ async def record_job_result(ctx: dict) -> None:
         log.result = _safe_result(ctx.get("job_result"))
         log.finished_at = func.now()
         await session.commit()
+
+async def cleanup_scheduler_log(ctx: dict, *, retention_days: int = 30) -> dict:
+    """Delete scheduler_log entries older than retention_days."""
+    from datetime import datetime, timedelta
+    
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            SchedulerLog.__table__.delete().where(SchedulerLog.started_at < cutoff)
+        )
+        await session.commit()
+        
+        deleted = result.rowcount
+        logger.info(f"Cleaned up {deleted} scheduler_log entries older than {retention_days} days")
+        return {"deleted": deleted, "cutoff": cutoff.isoformat()}
+```
+
+```python
+# app/workers/arq_worker.py
+class WorkerSettings:
+    functions = [send_email, nightly_report, cleanup_scheduler_log]
+    cron_jobs = [
+        cron(nightly_report, hour=2, minute=0, run_at_startup=False),
+        cron(cleanup_scheduler_log, day="last", hour=3, minute=0, run_at_startup=False),
+    ]
 ```
 
 - `_safe_args`/`_safe_result` should redact anything sensitive (tokens, PII) before it's
@@ -404,6 +430,7 @@ from app.workers.jobs.send_email import send_email
 from app.workers.jobs.nightly_report import nightly_report
 from app.workers.jobs.process_webhook import process_webhook
 from app.workers.jobs.cleanup_expired import cleanup_expired
+from app.workers.history import cleanup_scheduler_log
 
 # Map jobs to queues
 JOB_QUEUES = {
@@ -411,6 +438,7 @@ JOB_QUEUES = {
     process_webhook: "short",
     nightly_report: "long",
     cleanup_expired: "long",
+    cleanup_scheduler_log: "long",
 }
 
 ALL_JOBS = list(JOB_QUEUES.keys())
