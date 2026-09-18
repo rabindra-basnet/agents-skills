@@ -8,7 +8,7 @@ topologies, or features arq genuinely lacks — don't default to it.
 
 ## Worker setup
 
-### Option 1: Decorator pattern (recommended)
+### Option 1: Decorator + explicit imports (recommended)
 
 ```python
 # app/workers/jobs/registry.py
@@ -49,11 +49,11 @@ from app.core.config import settings
 from app.workers.jobs.registry import get_all_jobs
 from app.workers.history import record_job_start, record_job_result
 
-# Explicit imports trigger @register_job decorator
-import app.workers.jobs.send_email  # noqa: F401
-import app.workers.jobs.nightly_report  # noqa: F401
-import app.workers.jobs.process_webhook  # noqa: F401
-import app.workers.jobs.cleanup_expired  # noqa: F401
+# Explicit imports — IDE autocomplete, type safety, easy to debug
+from app.workers.jobs.send_email import send_email
+from app.workers.jobs.nightly_report import nightly_report
+from app.workers.jobs.process_webhook import process_webhook
+from app.workers.jobs.cleanup_expired import cleanup_expired
 
 async def startup(ctx: dict) -> None:
     ctx["db_engine"] = engine
@@ -71,7 +71,7 @@ async def after_job_end(ctx: dict) -> None:
 
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    functions = get_all_jobs()  # ✅ Auto-populated from @register_job
+    functions = [send_email, nightly_report, process_webhook, cleanup_expired]
     cron_jobs = [
         cron(nightly_report, hour=2, minute=0, run_at_startup=False),
     ]
@@ -184,5 +184,4 @@ own retries/backoff via arq's `max_tries`/`retry_delay`.
 - **Never** use `run_at_startup=True` for cron jobs in production — they should run on schedule only.
 - **Never** store job results in memory — they'll be lost on restart.
 - **Never** use Celery unless you genuinely need multi-language workers or complex routing topologies.
-- **Never** forget to import job modules in `arq_worker.py` — unimported jobs won't be discovered.
-- **Never** use `register_job` without importing the module — the decorator only runs when the module loads.
+- **Never** use importlib for runtime job discovery — use explicit imports for IDE support and type safety.
