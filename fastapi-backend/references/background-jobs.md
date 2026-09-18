@@ -216,8 +216,8 @@ Postgres table, written from the job lifecycle hooks above.
 
 ```python
 # app/workers/history.py
-class JobExecution(Base):
-    __tablename__ = "job_executions"
+class SchedulerLog(Base):
+    __tablename__ = "scheduler_log"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     job_id: Mapped[str] = mapped_column(index=True)       # arq's ctx["job_id"]
     function_name: Mapped[str] = mapped_column(index=True)
@@ -231,9 +231,9 @@ class JobExecution(Base):
 
 async def record_job_start(ctx: dict) -> None:
     async with AsyncSessionLocal() as session:
-        session.add(JobExecution(
+        session.add(SchedulerLog(
             job_id=ctx["job_id"],
-            function_name=ctx["job_try"] and ctx.get("job_name", "unknown"),
+            function_name=ctx.get("job_name", "unknown"),
             args=_safe_args(ctx.get("job_args"), ctx.get("job_kwargs")),
             attempt=ctx.get("job_try", 1),
         ))
@@ -241,10 +241,10 @@ async def record_job_start(ctx: dict) -> None:
 
 async def record_job_result(ctx: dict) -> None:
     async with AsyncSessionLocal() as session:
-        execution = await session.get(JobExecution, ...)  # look up by job_id + attempt
-        execution.status = "failed" if ctx.get("job_result_failed") else "success"
-        execution.result = _safe_result(ctx.get("job_result"))
-        execution.finished_at = func.now()
+        log = await session.get(SchedulerLog, ...)  # look up by job_id + attempt
+        log.status = "failed" if ctx.get("job_result_failed") else "success"
+        log.result = _safe_result(ctx.get("job_result"))
+        log.finished_at = func.now()
         await session.commit()
 ```
 
@@ -254,7 +254,7 @@ async def record_job_result(ctx: dict) -> None:
   `status` for "show me failures" dashboards/alerts.
 - For cron jobs specifically, this table doubles as your audit trail that the schedule is
   actually firing — alert if `nightly_report` has no `success` row for >26h, etc.
-- Keep the history table pruned/partitioned if job volume is high (a monthly partition or a
+- Keep the `scheduler_log` table pruned/partitioned if job volume is high (a monthly partition or a
   separate cron job that archives/deletes rows older than N days) — it will grow forever
   otherwise.
 
@@ -636,7 +636,7 @@ services:
 
 - **Never** run arq worker inside the uvicorn process — it must be a separate process/container.
 - **Never** do actual work inline in request/response for external I/O — enqueue and return immediately.
-- **Never** rely only on arq's Redis results for audit/history — persist to Postgres `job_executions` table.
+- **Never** rely only on arq's Redis results for audit/history — persist to Postgres `scheduler_log` table.
 - **Never** log raw job args/results with sensitive data — redact before persisting.
 - **Never** skip `on_job_start`/`after_job_end` hooks — they're your audit trail.
 - **Never** use `max_tries=1` for jobs that call external services — transient failures happen.
