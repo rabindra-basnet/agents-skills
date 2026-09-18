@@ -466,7 +466,8 @@ uv run arq app.workers.arq_worker.WorkerSettings
 # app/workers/arq_worker.py
 from app.workers.queues import QUEUES
 
-def create_worker_settings(queue_name: str):
+def create_worker_settings(queue_name: str, timeout: int | None = None):
+    """Create worker settings for a specific queue."""
     queue = QUEUES[queue_name]
     
     class WorkerSettings:
@@ -474,14 +475,15 @@ def create_worker_settings(queue_name: str):
         functions = ALL_JOBS
         queue_name = queue_name
         max_jobs = queue.max_jobs
-        job_timeout = queue.timeout
+        job_timeout = timeout or queue.timeout
         on_job_start = record_job_start
         after_job_end = record_job_result
     
     return WorkerSettings
 
-ShortWorker = create_worker_settings("short")
-LongWorker = create_worker_settings("long")
+ShortWorker = create_worker_settings("short")           # Uses queue timeout (60s)
+LongWorker = create_worker_settings("long")             # Uses queue timeout (3600s)
+LongWorkerSlow = create_worker_settings("long", timeout=7200)  # Custom timeout (2h)
 ```
 
 ### Docker compose
