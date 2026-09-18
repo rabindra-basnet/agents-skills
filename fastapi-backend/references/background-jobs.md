@@ -260,21 +260,19 @@ async def record_job_result(ctx: dict) -> None:
 
 ## Enqueuing from the API
 
-Inspired by Frappe's `enqueue` pattern — accept both function references and string names,
-with queue selection, timeouts, callbacks, and automatic logging.
-
 ```python
 # app/workers/enqueue.py
-from typing import Callable, Any
+from typing import Callable
 from app.core.redis import get_arq_redis
 from app.core.logging import get_logger
+from app.workers.jobs import JOB_QUEUES
 
 logger = get_logger(__name__)
 
 async def enqueue_job(
     method: str | Callable,
     *,
-    queue: str = "default",
+    queue: str | None = None,
     timeout: int | None = None,
     on_success: Callable | None = None,
     on_failure: Callable | None = None,
@@ -287,11 +285,11 @@ async def enqueue_job(
     Enqueue a background job.
 
     Args:
-        method: Function or dotted path string (e.g. "app.workers.jobs.send_email")
-        queue: Queue name (short, default, long)
-        timeout: Job timeout in seconds (defaults to queue timeout)
-        on_success: Success callback
-        on_failure: Failure callback
+        method: Job function or dotted path string
+        queue: Queue override (short/default/long). If None, uses JOB_QUEUES mapping.
+        timeout: Job timeout in seconds (overrides queue default)
+        on_success: Success callback function
+        on_failure: Failure callback function
         at_front: Enqueue at front of queue
         job_id: Unique job ID for deduplication
         deduplicate: Don't re-queue if already queued
@@ -307,6 +305,9 @@ async def enqueue_job(
         job_name = f"{method.__module__}.{method.__qualname__}"
     else:
         job_name = method
+
+    # Use provided queue or fall back to job's default
+    queue = queue or JOB_QUEUES.get(method, "default")
 
     # Deduplication check
     if deduplicate:
@@ -328,50 +329,18 @@ async def enqueue_job(
         }
     )
 
+    # Build enqueue kwargs
+    enqueue_kwargs = {"_queue_name": queue}
+    if timeout:
+        enqueue_kwargs["_job_timeout"] = timeout
+    if job_id:
+        enqueue_kwargs["_job_id"] = job_id
+
     # Enqueue to arq
-    result = await redis.enqueue_job(
-        job_name,
-        _queue_name=queue,
-        _job_id=job_id,
-        **kwargs,
-    )
-
-    return result
+    return await redis.enqueue_job(job_name, **enqueue_kwargs, **kwargs)
 ```
 
-### Usage examples
-
-```python
-# Pass function directly
-from app.workers.jobs.send_email import send_email
-
-await enqueue_job(send_email, to="user@example.com", template="welcome")
-
-# Pass string path
-await enqueue_job("app.workers.jobs.send_email", to="user@example.com", template="welcome")
-
-# With queue selection
-await enqueue_job("app.workers.jobs.nightly_report", queue="long", timeout=3600)
-
-# With deduplication
-await enqueue_job(
-    "app.workers.jobs.sync_data",
-    job_id="sync-daily",
-    deduplicate=True,
-    source="api",
-)
-
-# With callbacks
-await enqueue_job(
-    "app.workers.jobs.process_payment",
-    on_success=payment_success_handler,
-    on_failure=payment_failure_handler,
-    amount=100,
-    user_id="user-123",
-)
-```
-
-### API service usage
+### Usage
 
 ```python
 # app/features/auth/service.py
@@ -381,7 +350,6 @@ class AuthService:
     async def register(self, data: UserCreate) -> User:
         user = await self._repo.create(data)
         
-        # Enqueue email job
         await enqueue_job(
             "app.workers.jobs.send_email",
             to=user.email,
@@ -390,6 +358,17 @@ class AuthService:
         )
         
         return user
+```
+
+```python
+# Override queue
+await enqueue_job("send_email", queue="long", to="user@example.com")
+
+# Override timeout
+await enqueue_job("nightly_report", timeout=7200)
+
+# Deduplication
+await enqueue_job("sync_data", job_id="sync-daily", deduplicate=True)
 ```
 
 Never do the actual work inline in the request/response cycle if it involves external I/O
