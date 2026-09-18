@@ -161,36 +161,7 @@ async def record_job_result(ctx: dict) -> None:
 
 ```python
 # app/workers/enqueue.py
-from typing import overload, Literal
 from app.core.redis import get_arq_redis
-
-@overload
-async def enqueue_job(
-    job: Literal["send_email"],
-    *,
-    to: str,
-    template: str,
-    subject: str,
-    context: dict | None = None,
-) -> None: ...
-
-@overload
-async def enqueue_job(
-    job: Literal["nightly_report"],
-) -> None: ...
-
-@overload
-async def enqueue_job(
-    job: Literal["process_webhook"],
-    *,
-    event_type: str,
-    payload: dict,
-) -> None: ...
-
-@overload
-async def enqueue_job(
-    job: Literal["cleanup_expired"],
-) -> None: ...
 
 async def enqueue_job(job: str, **kwargs) -> None:
     """Enqueue a background job."""
